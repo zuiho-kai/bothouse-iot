@@ -28,8 +28,10 @@ from bothouse_iot.xiaozhi import FRAME_MS, SAMPLE_RATE, frame
 
 
 class FakeXiaozhi:
-    def __init__(self, ota_url: str, device: str = "aa:bb:cc:dd:ee:01", version: int = 1, fw: str = "2.5.2"):
-        self.ota_url, self.device, self.version, self.fw = ota_url, device, version, fw
+    def __init__(self, ota_url: str, device: str = "aa:bb:cc:dd:ee:01", version: int = 1, fw: str = "2.5.2",
+                 ssl: object = True):
+        """ssl：传给 aiohttp 的 ssl 参数（False = 不验证书，模拟云端转发用自签证书时）。"""
+        self.ota_url, self.device, self.version, self.fw, self.ssl = ota_url, device, version, fw, ssl
         self.client = str(uuid.uuid4())
         self.got: list[tuple[float, str, object]] = []   # (时刻, "json"/"audio", 内容)；audio 记去掉协议头后的 Opus 包
         self.ota_reply: dict | None = None
@@ -47,7 +49,7 @@ class FakeXiaozhi:
         self.http = self.http or aiohttp.ClientSession()
         body = {"application": {"version": self.fw}, "mac_address": self.device}
         async with self.http.post(self.ota_url, json=body,
-                                  headers={"Device-Id": self.device, "Client-Id": self.client}) as r:
+                                  headers={"Device-Id": self.device, "Client-Id": self.client}, ssl=self.ssl) as r:
             r.raise_for_status()
             self.ota_reply = await r.json()
         return self.ota_reply
@@ -60,7 +62,7 @@ class FakeXiaozhi:
         headers = {"Protocol-Version": str(self.version), "Device-Id": self.device, "Client-Id": self.client}
         if ws_cfg.get("token"):
             headers["Authorization"] = f"Bearer {ws_cfg['token']}"
-        self.ws = await self.http.ws_connect(ws_cfg["url"], headers=headers, autoping=autoping)
+        self.ws = await self.http.ws_connect(ws_cfg["url"], headers=headers, autoping=autoping, ssl=self.ssl)
         # 板子的 hello（固件 websocket_protocol.cc 第 200-217 行）
         params = {"format": "opus", "sample_rate": SAMPLE_RATE, "channels": 1, "frame_duration": FRAME_MS}
         hello = {"type": "hello", "version": self.version, "features": {"mcp": True},

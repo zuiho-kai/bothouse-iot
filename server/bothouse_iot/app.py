@@ -271,7 +271,8 @@ class App:
         await self.ws.send_json(m)
         self.sent.append(m)
         self.dial.set(role, "thinking")
-        self.log(f"[bothouse] ← {role}（项目 {b.project}）：{text[:80] if text else f'语音 {len(wav or b"")} 字节'}")
+        what = text[:80] if text else f"语音 {len(wav or b'')} 字节"
+        self.log(f"[bothouse] ← {role}（项目 {b.project}）：{what}")
         return True
 
     # ---------- 板子收音 ----------
