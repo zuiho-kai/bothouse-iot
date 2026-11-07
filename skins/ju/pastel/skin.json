@@ -1,0 +1,129 @@
+{
+ "size": [
+  1024,
+  1024
+ ],
+ "textures": {
+  "base": "base.png",
+  "eyes_closed": "eyes_closed.png",
+  "eyes_think": "eyes_think.png",
+  "mouth_open": "mouth_open.png",
+  "mouth_half": "mouth_half.png"
+ },
+ "parts": [
+  {
+   "id": "base",
+   "tex": "base",
+   "box": [
+    0,
+    0,
+    1024,
+    1024
+   ],
+   "grid": [
+    32,
+    32
+   ],
+   "z": 0
+  },
+  {
+   "id": "eyes_closed",
+   "tex": "eyes_closed",
+   "box": [
+    248,
+    434,
+    508,
+    172
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 2,
+   "alpha": 0
+  },
+  {
+   "id": "eyes_think",
+   "tex": "eyes_think",
+   "box": [
+    310,
+    485,
+    387,
+    102
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 1,
+   "alpha": 0
+  },
+  {
+   "id": "mouth_open",
+   "tex": "mouth_open",
+   "box": [
+    458,
+    582,
+    120,
+    82
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 3,
+   "alpha": 0
+  },
+  {
+   "id": "mouth_half",
+   "tex": "mouth_half",
+   "box": [
+    458,
+    582,
+    120,
+    82
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 3,
+   "alpha": 0
+  }
+ ],
+ "rig": {
+  "neck": [
+   512,
+   700
+  ],
+  "head": [
+   512,
+   390,
+   400,
+   330
+  ],
+  "headFeather": 0.3,
+  "hair": [
+   [
+    0,
+    320,
+    300,
+    1024,
+    "L"
+   ],
+   [
+    724,
+    320,
+    1024,
+    1024,
+    "R"
+   ]
+  ],
+  "hairAmp": 14,
+  "bubble": [
+   300,
+   290
+  ]
+ },
+ "name": "油画棒"
+}

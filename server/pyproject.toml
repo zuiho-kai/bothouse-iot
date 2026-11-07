@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 packages = ["bothouse_iot"]
 
 [tool.setuptools.package-data]
-bothouse_iot = ["static/*"]
+bothouse_iot = ["static/*", "static/vendor/coopanion/*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

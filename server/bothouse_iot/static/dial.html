@@ -58,6 +58,12 @@
   @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
   @keyframes spin { to { transform:rotate(360deg); } }
   @keyframes dot { 0%,80%,100% { transform:translateY(0); opacity:.5; } 40% { transform:translateY(-5px); opacity:1; } }
+  /* 会动的表盘（dial-figure.js）：画布盖住头像图；装上了就关掉旧的整图呼吸 */
+  .figure { position:absolute; inset:0; width:100%; height:100%; z-index:1; }
+  .card.animated .face { display:none; }
+  .bubbles { position:absolute; z-index:2; pointer-events:none; font-size:calc(var(--size) * .045); opacity:0; }
+  .bubbles i { position:absolute; left:0; top:0; width:1.6em; height:1.6em; margin:-.8em; border-radius:50%;
+               background:rgba(255,255,255,.92); box-shadow:0 0 .5em rgba(0,0,0,.25); }
   body.single { background:#000; height:100vh; overflow:hidden; display:flex; align-items:center; justify-content:center; --size:100vmin; }
   body.single header, body.single .sub { display:none; }
   body.single #dials { padding:0; }
@@ -74,6 +80,10 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&l
 const ONLY = new URLSearchParams(location.search).get("role");
 const STATUS_TEXT = {thinking: "思考中", speaking: "正在回答"};
 const BAR_N = 5;
+const SKIN = new URLSearchParams(location.search).get("skin");   // 临时换皮肤看：/dial?skin=standard
+const BASE = location.pathname.replace(/\/?$/, "/");
+const figures = {};   // role -> {fig, skin, env}
+let figureMod = null;
 if (ONLY) document.body.classList.add("single");
 
 function card(m) {
@@ -104,6 +114,37 @@ function apply(m) {
   el.querySelector(".sub").textContent = (m.board ? "板子在线" : "板子不在线") + " · " + ({idle: "待机"}[m.state] || STATUS_TEXT[m.state] || m.state);
   el.dataset.state = m.state;
   el.querySelector(".pill.status .txt").textContent = STATUS_TEXT[m.state] || "";
+  animate(el, m);
+}
+
+// 有皮肤就换成会动的角色（WebGL）；加载失败或浏览器不支持就留着上面的静态头像
+async function animate(el, m) {
+  const want = m.skins && m.skins.length ? (m.skins.includes(SKIN) ? SKIN : m.skins[0]) : "";
+  let f = figures[m.role];
+  if (!f || f.skin !== want) {
+    if (f && f.fig) f.fig.dispose();
+    el.classList.remove("animated");
+    f = figures[m.role] = {skin: want, fig: null, env: "", state: "", m};
+    if (!want) return;
+    try {
+      figureMod = figureMod || await import(BASE + "static/dial-figure.js");
+      const fig = await figureMod.mountFigure(el.querySelector(".screen"), m.skin_base + want + "/");
+      if (figures[m.role] !== f) { fig.dispose(); return; }
+      f.fig = fig;
+      el.classList.add("animated");
+      m = f.m;   // 装的这会儿可能又来了新状态，用最新的
+    } catch (err) {
+      console.warn("表盘动画装不上，用静态头像：", err);
+      return;
+    }
+  }
+  f.m = m;
+  if (!f.fig) return;
+  const env = m.env ? m.env.join(",") : "";
+  if (m.state !== f.state || env !== f.env) {
+    f.fig.set(m.state, m.env ? {env: m.env, envMs: m.env_ms} : {});
+    f.state = m.state; f.env = env;
+  }
 }
 
 // 正在回答：没有音频可分析，用合成的起伏驱动光环和波形
@@ -120,7 +161,7 @@ function frame(t) {
 requestAnimationFrame(frame);
 
 // 相对地址：页面在 /dial，事件在 /dial/events；经反向代理加了前缀也能用
-const es = new EventSource(location.pathname.replace(/\/?$/, "/") + "events");
+const es = new EventSource(BASE + "events");
 es.onopen = () => { $("meta").textContent = "已连上设备服务"; };
 es.onerror = () => { $("meta").textContent = "和设备服务断开，正在重连…"; };
 es.onmessage = (e) => { try { apply(JSON.parse(e.data)); } catch (err) { console.error(err); } };

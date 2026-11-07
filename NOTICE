@@ -12,3 +12,9 @@ server/bothouse_iot/xiaozhi.py implements the xiaozhi device protocol with refer
 xiaozhi-esp32 docs and xinnan-tech/xiaozhi-esp32-server (MIT); no code is copied from the latter.
 
 firmware/components/cn_dial and cn_dial_lvgl (the role dial) are our own work, Apache-2.0.
+
+server/bothouse_iot/static/vendor/coopanion/rig.js is copied unmodified from Coopanion
+(https://github.com/Pal-AI-Lab/Coopanion, tag v0.2.18, commit 5ac9114). Its license text is kept
+next to it in server/bothouse_iot/static/vendor/coopanion/LICENSE and applies to that file.
+
+skins/ (the role art used by the animated dial) is our own role art, Apache-2.0 with the rest of this repository.

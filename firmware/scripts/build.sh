@@ -3,7 +3,8 @@
 #
 #   OTA_URL=http://<device-service-host>:8791/xiaozhi/ota/ firmware/scripts/build.sh [board] [workdir]
 #
-# board   xiaozhi board name (default spotpear/sp-esp32-s3-1.28-box; the role dial is only wired there)
+# board   xiaozhi board name (default spotpear/sp-esp32-s3-1.28-box; the role dial is wired there and on
+#         waveshare/esp32-s3-touch-lcd-1.85c)
 # workdir where to clone/patch xiaozhi-esp32 (default firmware/.build/xiaozhi-esp32)
 # Needs ESP-IDF v6.1 sourced (`. $IDF_PATH/export.sh`) or IDF_PATH set. Output: <workdir>/../out/.
 set -euo pipefail
