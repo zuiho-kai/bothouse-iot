@@ -1,8 +1,10 @@
 # 固件：xiaozhi-esp32 v2.5.2 + bothouse-iot 补丁
 
-- `patches/`：对上游 [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) v2.5.2 的改动（一个补丁）。
-  主机随时推语音（`CONFIG_RH_HOST_PUSH`）、静音本地提示音、空闲时把麦克风传给设备服务（`CONFIG_RH_ALWAYS_LISTEN`）、
+- `patches/`：对上游 [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) v2.5.2 的改动（按编号依次打）。
+  0001：主机随时推语音（`CONFIG_RH_HOST_PUSH`）、静音本地提示音、空闲时把麦克风传给设备服务（`CONFIG_RH_ALWAYS_LISTEN`）、
   圆屏角色表盘（`CONFIG_RH_DIAL`，spotpear sp-esp32-s3-1.28-box）、hello 上报屏幕、Waveshare 1.85C 的六个触摸键。
+  0002：会动的表盘（设备服务发 `anim` 帧包，板子按状态播循环帧、说话只刷嘴；帧包格式见 docs/dial-skins.md），
+  Waveshare 1.85C（360 圆屏）也用角色表盘。
 - `components/cn_dial`、`components/cn_dial_lvgl`：表盘的屏幕尺寸计算和叠加层（名牌、状态、电量弧、气泡）。
 - `scripts/build.sh`：拉干净的 v2.5.2 → 打补丁 → 放组件 → 编 OTA 地址 → 编译。
 - 上游许可：`LICENSE-xiaozhi-esp32`（MIT）。

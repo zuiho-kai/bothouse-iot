@@ -18,6 +18,8 @@ class Board:
     color: str = "#9aa0a6"
     avatar: str = ""            # 头像图（相对配置文件）
     avatar_thinking: str = ""
+    skins: str = ""             # 动画皮肤目录（相对配置文件），下面每个子目录一款皮肤：<皮肤>/skin.json，见 docs/dial-skins.md
+    skin: str = ""              # 默认用哪款（子目录名）；不写用目录里排第一的
     key: str = ""               # 这块板自己的钥匙（可选）
 
 
@@ -73,7 +75,8 @@ def load(path: str | Path) -> Config:
     for b in d.get("boards", []):
         board = Board(device=norm_device(b["device"]), role=b["role"], project=b["project"], name=b.get("name", b["role"]),
                       color=b.get("color", "#9aa0a6"), avatar=b.get("avatar", ""),
-                      avatar_thinking=b.get("avatar_thinking", ""), key=b.get("key", ""))
+                      avatar_thinking=b.get("avatar_thinking", ""), skins=b.get("skins", ""), skin=b.get("skin", ""),
+                      key=b.get("key", ""))
         if board.role in seen:
             raise ValueError(f"角色 {board.role} 绑了两块板子：一块板绑一个角色")
         seen.add(board.role)

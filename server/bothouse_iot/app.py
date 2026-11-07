@@ -322,7 +322,8 @@ class App:
         pid = uuid.uuid4().hex
         fut = asyncio.get_running_loop().create_future()
         self._receipts[pid] = fut
-        self.dial.set(role, "speaking")
+        env = await asyncio.get_running_loop().run_in_executor(None, self.dial.envelope, audio)   # 网页表盘按它开合嘴
+        self.dial.set(role, "speaking", env)
         self.mic.muted.add(role)
         try:
             self.xz.send([{"role": role, "play_id": pid, "event": "start", "text": text},

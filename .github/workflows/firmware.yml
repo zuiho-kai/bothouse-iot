@@ -16,7 +16,7 @@ jobs:
     container: espressif/idf:v6.1
     strategy:
       matrix:
-        board: ["spotpear/sp-esp32-s3-1.28-box"]
+        board: ["spotpear/sp-esp32-s3-1.28-box", "waveshare/esp32-s3-touch-lcd-1.85c"]
     steps:
       - uses: actions/checkout@v4
       - name: build

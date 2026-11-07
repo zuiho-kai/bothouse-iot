@@ -1,0 +1,566 @@
+From c6a2efb43b887e9592e754fcf0c30d646880bac4 Mon Sep 17 00:00:00 2001
+From: bothouse-iot <noreply@anthropic.com>
+Date: Sun, 8 Nov 2026 02:30:56 +0900
+Subject: [PATCH] bothouse-iot: animated role dial (frame packs from the web
+ dial), role dial on Waveshare 1.85C
+
+The device service sends "anim" in rh_dial: the board downloads the pack recorded from the web
+dial's animated figure (tools/dial_frames.py) into PSRAM and plays the idle / thinking loops at the
+pack's fps; speaking shows one still and only repaints the mouth block by playback level.
+rh_dial_stats now reports anim_fps, decode_ms and psram_free. CONFIG_RH_DIAL is also offered on the
+Waveshare ESP32-S3-Touch-LCD-1.85C (360 round), with CONFIG_FREERTOS_HZ=1000 like the spotpear box.
+---
+ main/CMakeLists.txt                           |   1 +
+ main/Kconfig.projbuild                        |   2 +-
+ .../esp32-s3-touch-lcd-1.85c/config.json      |   1 +
+ .../esp32-s3-touch-lcd-1.85c.cc               |  13 +
+ main/display/rh_dial_anim.cc                  |  92 +++++++
+ main/display/rh_dial_anim.h                   |  42 ++++
+ main/display/rh_dial_display.cc               | 226 +++++++++++++++++-
+ main/display/rh_dial_display.h                |  28 +++
+ 8 files changed, 400 insertions(+), 5 deletions(-)
+ create mode 100644 main/display/rh_dial_anim.cc
+ create mode 100644 main/display/rh_dial_anim.h
+
+diff --git a/main/CMakeLists.txt b/main/CMakeLists.txt
+index f51fdc9..b7e66cf 100644
+--- a/main/CMakeLists.txt
++++ b/main/CMakeLists.txt
+@@ -30,6 +30,7 @@ set(SOURCES "audio/audio_codec.cc"
+             "display/lvgl_display/jpg/image_to_jpeg.cpp"
+             "display/lvgl_display/jpg/jpeg_to_image.c"
+             "display/rh_dial_display.cc"
++            "display/rh_dial_anim.cc"
+             "protocols/protocol.cc"
+             "protocols/text_glyph_payload.cc"
+             "protocols/mqtt_protocol.cc"
+diff --git a/main/Kconfig.projbuild b/main/Kconfig.projbuild
+index eae768d..6bdf19a 100644
+--- a/main/Kconfig.projbuild
++++ b/main/Kconfig.projbuild
+@@ -56,7 +56,7 @@ config RH_REOPEN_DELAY_SEC
+ config RH_DIAL
+     bool "Show the role dial (same look as the hub web dial page) instead of the xiaozhi UI"
+     default y
+-    depends on BOARD_TYPE_SPOTPEAR_ESP32_S3_1_28_BOX
++    depends on BOARD_TYPE_SPOTPEAR_ESP32_S3_1_28_BOX || BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
+     help
+         rh: draw the round dial of the bothouse-iot device service rh/static/dial.html with LVGL
+         (avatar, name pill, idle breathe + glint, thinking spinner, speaking glow + bars,
+diff --git a/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/config.json b/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/config.json
+index 6957b9e..08ab540 100644
+--- a/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/config.json
++++ b/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/config.json
+@@ -7,6 +7,7 @@
+             "name": "esp32-s3-touch-lcd-1.85c",
+             "sdkconfig_append": [
+                 "CONFIG_ESP_TASK_WDT_PANIC=y",
++                "CONFIG_FREERTOS_HZ=1000",
+                 "CONFIG_ESP_SYSTEM_PANIC_PRINT_REBOOT=y"
+             ]
+         }
+diff --git a/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/esp32-s3-touch-lcd-1.85c.cc b/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/esp32-s3-touch-lcd-1.85c.cc
+index 46cc2e2..e0967b8 100644
+--- a/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/esp32-s3-touch-lcd-1.85c.cc
++++ b/main/boards/waveshare/esp32-s3-touch-lcd-1.85c/esp32-s3-touch-lcd-1.85c.cc
+@@ -22,6 +22,14 @@
+ 
+ #define TAG "waveshare_lcd_1_85c"
+ 
++#if CONFIG_RH_DIAL
++#include "display/rh_dial_display.h"
++// rh: the role dial (display/rh_dial_display.cc) on this 360 round screen, same as the spotpear
++// box: 16 px font (BUILTIN_TEXT_FONT font_noto_sans_basic_16_4, main/CMakeLists.txt), raw RGB565
++// avatars, no battery gauge wired here.
++static constexpr cn_dial::ScreenProfile kRhScreen{DISPLAY_WIDTH, DISPLAY_HEIGHT, cn_dial::Shape::kRound, 16, {16}, 1, cn_dial::kAssetRgb565Raw, cn_dial::Battery::kUnknown};
++#endif
++
+ #define LCD_OPCODE_WRITE_CMD        (0x02ULL)
+ #define LCD_OPCODE_READ_CMD         (0x0BULL)
+ #define LCD_OPCODE_WRITE_COLOR      (0x32ULL)
+@@ -361,8 +369,13 @@ private:
+         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
+         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
+ 
++#if CONFIG_RH_DIAL
++        display_ = new RhDialDisplay(panel_io, panel,
++                                    DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY, kRhScreen);
++#else
+         display_ = new SpiLcdDisplay(panel_io, panel,
+                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
++#endif
+     }
+ 
+     void OnConversationClick() {
+diff --git a/main/display/rh_dial_anim.cc b/main/display/rh_dial_anim.cc
+new file mode 100644
+index 0000000..24da851
+--- /dev/null
++++ b/main/display/rh_dial_anim.cc
+@@ -0,0 +1,92 @@
++#include "rh_dial_anim.h"
++#if CONFIG_RH_DIAL
++
++#include <esp_heap_caps.h>
++#include <esp_jpeg_dec.h>
++#include <esp_log.h>
++
++#include <cstring>
++
++#define TAG "RhDialAnim"
++
++namespace {
++uint16_t U16(const uint8_t* p) { return p[0] | p[1] << 8; }
++uint32_t U32(const uint8_t* p) { return p[0] | p[1] << 8 | p[2] << 16 | (uint32_t)p[3] << 24; }
++}  // namespace
++
++RhDialAnim::~RhDialAnim() {
++    if (data_) heap_caps_free(data_);
++}
++
++bool RhDialAnim::Load(uint8_t* data, size_t len, int size) {
++    if (data_) heap_caps_free(data_);
++    data_ = data;
++    len_ = len;
++    for (auto& s : sets_) s.clear();
++    if (len < 8 || memcmp(data, "RHA1", 4) != 0) {
++        ESP_LOGE(TAG, "not an RHA1 pack (%u bytes)", (unsigned)len);
++        return false;
++    }
++    size_ = U16(data + 4);
++    fps_ = data[6];
++    int nsets = data[7];
++    if (size_ != size || fps_ <= 0) {
++        ESP_LOGE(TAG, "pack is %d px @ %d fps, canvas is %d px", size_, fps_, size);
++        return false;
++    }
++    size_t off = 8;
++    for (int s = 0; s < nsets; s++) {
++        if (off + 11 > len) return false;
++        int kind = data[off], n = U16(data + off + 1);
++        Rect r{U16(data + off + 3), U16(data + off + 5), U16(data + off + 7), U16(data + off + 9)};
++        off += 11;
++        std::vector<Frame> frames;
++        for (int i = 0; i < n; i++) {
++            if (off + 4 > len) return false;
++            uint32_t m = U32(data + off);
++            off += 4;
++            if (off + m > len) return false;
++            frames.push_back({data + off, m});
++            off += m;
++        }
++        if (kind >= 0 && kind < kKinds) {
++            sets_[kind] = std::move(frames);
++            if (kind == kMouth) mouth_ = r;
++        }
++    }
++    // The mouth block must lie inside the canvas, else the blit would write past the frame.
++    if (mouth_.w <= 0 || mouth_.h <= 0 || mouth_.x + mouth_.w > size_ || mouth_.y + mouth_.h > size_) {
++        sets_[kMouth].clear();
++    }
++    ESP_LOGI(TAG, "pack %d px @ %d fps: idle %d, thinking %d, speaking %d, mouth %d (%dx%d at %d,%d), %u KB", size_, fps_,
++             Count(kIdle), Count(kThink), Count(kTalk), Count(kMouth), mouth_.w, mouth_.h, mouth_.x, mouth_.y,
++             (unsigned)(len / 1024));
++    return Count(kIdle) > 0;
++}
++
++bool RhDialAnim::Decode(Kind k, int i, uint8_t* dst, size_t cap) const {
++    if (i < 0 || i >= Count(k)) return false;
++    const Frame& f = sets_[k][i];
++    jpeg_dec_config_t cfg = DEFAULT_JPEG_DEC_CONFIG();
++    cfg.output_type = JPEG_PIXEL_FORMAT_RGB565_LE;
++    jpeg_dec_handle_t dec = nullptr;
++    if (jpeg_dec_open(&cfg, &dec) != JPEG_ERR_OK) return false;
++    jpeg_dec_io_t io = {};
++    io.inbuf = const_cast<uint8_t*>(f.p);
++    io.inbuf_len = (int)f.n;
++    jpeg_dec_header_info_t info = {};
++    bool ok = jpeg_dec_parse_header(dec, &io, &info) == JPEG_ERR_OK;
++    int need = 0;
++    ok = ok && jpeg_dec_get_outbuf_len(dec, &need) == JPEG_ERR_OK && need > 0 && (size_t)need <= cap;
++    int want_w = k == kMouth ? mouth_.w : size_, want_h = k == kMouth ? mouth_.h : size_;
++    ok = ok && info.width == want_w && info.height == want_h;
++    if (ok) {
++        io.outbuf = dst;
++        ok = jpeg_dec_process(dec, &io) == JPEG_ERR_OK;
++    }
++    jpeg_dec_close(dec);
++    if (!ok) ESP_LOGW(TAG, "frame %d/%d did not decode (%dx%d, need %d of %u)", k, i, info.width, info.height, need, (unsigned)cap);
++    return ok;
++}
++
++#endif  // CONFIG_RH_DIAL
+diff --git a/main/display/rh_dial_anim.h b/main/display/rh_dial_anim.h
+new file mode 100644
+index 0000000..b09a5f7
+--- /dev/null
++++ b/main/display/rh_dial_anim.h
+@@ -0,0 +1,42 @@
++#pragma once
++// rh dial animation pack (CONFIG_RH_DIAL): loops recorded offline from the web dial's animated
++// figure (bothouse-iot tools/dial_frames.py) and served by the device service as
++// /xiaozhi/dial/<role>.anim?size=<canvas>. Little endian:
++//   "RHA1" | u16 size | u8 fps | u8 nsets
++//   per set: u8 kind | u16 n | u16 x, y, w, h (mouth set only) | n x (u32 len + JPEG)
++//   kinds: 0 idle loop, 1 thinking loop, 2 speaking still, 3 mouth crops (closed, half, open)
++// Speaking shows the still and only repaints the mouth block, picked by the playback level.
++#include <sdkconfig.h>
++#if CONFIG_RH_DIAL
++
++#include <cstddef>
++#include <cstdint>
++#include <vector>
++
++class RhDialAnim {
++public:
++    enum Kind { kIdle = 0, kThink = 1, kTalk = 2, kMouth = 3, kKinds = 4 };
++    struct Rect { int x = 0, y = 0, w = 0, h = 0; };
++
++    ~RhDialAnim();
++    // Takes ownership of `data` (heap_caps_malloc). False when the pack is malformed, is not for a
++    // `size` px canvas, or lacks the idle loop.
++    bool Load(uint8_t* data, size_t len, int size);
++    int fps() const { return fps_; }
++    int size() const { return size_; }
++    int Count(Kind k) const { return (int)sets_[k].size(); }
++    const Rect& mouth() const { return mouth_; }
++    // Frame i of set k as RGB565 little endian into dst (16-byte aligned, cap bytes). The decoded
++    // size is size x size, or the mouth rect for kMouth. Safe from any task (own decoder handle).
++    bool Decode(Kind k, int i, uint8_t* dst, size_t cap) const;
++
++private:
++    struct Frame { const uint8_t* p; uint32_t n; };
++    uint8_t* data_ = nullptr;
++    size_t len_ = 0;
++    int size_ = 0, fps_ = 0;
++    std::vector<Frame> sets_[kKinds];
++    Rect mouth_;
++};
++
++#endif  // CONFIG_RH_DIAL
+diff --git a/main/display/rh_dial_display.cc b/main/display/rh_dial_display.cc
+index 551d3cf..4acaf03 100644
+--- a/main/display/rh_dial_display.cc
++++ b/main/display/rh_dial_display.cc
+@@ -272,15 +272,20 @@ void RhDialDisplay::ReportStats(int64_t now_ms, const char* why) {
+         char buf[256];
+         snprintf(buf, sizeof(buf),
+                  "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/rh_dial_stats\",\"params\":{\"state\":\"%s\","
+-                 "\"why\":\"%s\",\"secs\":%.1f,\"fps\":%.1f,\"timer_hz\":%.1f,\"render_ms\":%.1f,\"heap_internal\":%u}}",
++                 "\"why\":\"%s\",\"secs\":%.1f,\"fps\":%.1f,\"timer_hz\":%.1f,\"render_ms\":%.1f,\"heap_internal\":%u,"
++                 "\"anim_fps\":%.1f,\"decode_ms\":%.1f,\"psram_free\":%u}}",
+                  StateName(state_), why, span / 1000.0f, stat_renders_ * 1000.0f / span, stat_ticks_ * 1000.0f / span,
+                  stat_renders_ ? stat_render_us_ / 1000.0f / stat_renders_ : 0.0f,
+-                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
++                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL), stat_anim_frames_ * 1000.0f / span,
++                 stat_decodes_ ? stat_decode_us_ / 1000.0f / stat_decodes_ : 0.0f,
++                 (unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+         ESP_LOGI(TAG, "%s", buf);
+         Application::GetInstance().SendMcpMessage(buf);
+     }
+     stat_renders_ = stat_ticks_ = 0;
+     stat_render_us_ = 0;
++    stat_anim_frames_ = stat_decodes_ = 0;
++    stat_decode_us_ = 0;
+     stat_since_ms_ = now_ms;
+ }
+ 
+@@ -499,7 +504,8 @@ void RhDialDisplay::Tick() {
+ 
+     // Thinking picture cross-fade (only when the host sent a different one) and the interrupted
+     // grey-out: both repaint the whole picture, so they move in a few coarse steps.
+-    if (think_face_) {
++    if (anim_ && !anim_installing_) TickAnim(now_ms);
++    if (think_face_ && !anim_) {
+         think_opa_ = Follow(think_opa_, state_ == kThinking ? 1 : 0, dt, kTauFace);
+         Num(face_think_, LV_STYLE_IMAGE_OPA, (int32_t)lroundf(think_opa_ * 8) * 255 / 8);
+     }
+@@ -511,7 +517,7 @@ void RhDialDisplay::Tick() {
+     // Glint: idle only, sweeps during 78%..92% of each 9 s cycle, eased.
+     {
+         float u = Cyc(t, kGlintMs) / kGlintMs;
+-        bool on = state_ == kIdle && u >= .78f && u <= .92f && glint_px_;
++        bool on = state_ == kIdle && u >= .78f && u <= .92f && glint_px_ && !anim_;
+         // band centre at mid height, across the canvas
+         float cx = metrics_.canvas_x() + (-0.6f + 2.25f * Smooth((u - .78f) / .14f)) * C;
+         int sh = C / kGlintStrips;
+@@ -541,6 +547,7 @@ void RhDialDisplay::RhDial(const cJSON* msg) {
+     const char* state = str("state");
+     const char* avatar = str("avatar");
+     const char* avatar_think = str("avatar_think");
++    const char* anim = str("anim");
+     auto live = cJSON_GetObjectItem(msg, "live");
+     // conest DECOR.md 3: {"conest_status":{"busy":bool}}, the role's agent is working on a turn.
+     auto status = cJSON_GetObjectItem(msg, "conest_status");
+@@ -577,6 +584,7 @@ void RhDialDisplay::RhDial(const cJSON* msg) {
+         }
+         RequestAvatars(avatar, think);
+     }
++    if (anim) RequestAnim(anim);
+ }
+ 
+ void RhDialDisplay::RhDeviceState(int state) {
+@@ -761,4 +769,214 @@ std::unique_ptr<LvglImage> RhDialDisplay::Download(const std::string& base_url)
+     return std::make_unique<LvglAllocatedImage>(data, want, C, C, C * 2, LV_COLOR_FORMAT_RGB565);
+ }
+ 
++// ---------- animated face ----------
++namespace {
++constexpr int kMouthOpenUp = 550, kMouthHalfUp = 180;     // level x1000: same steps as dial-figure.js mouthFromLevel
++constexpr int kMouthOpenDown = 420, kMouthHalfDown = 80;  // (with hysteresis so the mouth does not flicker)
++int Want(int kind, int idx) { return kind << 8 | idx; }
++}  // namespace
++
++void RhDialDisplay::RequestAnim(const std::string& url) {
++    xSemaphoreTake(dl_mutex_, portMAX_DELAY);
++    want_anim_url_ = url;
++    bool start = !anim_dl_running_ && want_anim_url_ != have_anim_url_;
++    if (start) anim_dl_running_ = true;
++    xSemaphoreGive(dl_mutex_);
++    if (start && xTaskCreate(AnimDownloadTask, "rh_dial_anim", 8192, this, 2, nullptr) != pdPASS) {
++        ESP_LOGE(TAG, "rh dial: cannot start animation download task");
++        xSemaphoreTake(dl_mutex_, portMAX_DELAY);
++        anim_dl_running_ = false;
++        xSemaphoreGive(dl_mutex_);
++    }
++}
++
++void RhDialDisplay::AnimDownloadTask(void* arg) {
++    auto self = static_cast<RhDialDisplay*>(arg);
++    const int C = self->metrics_.canvas();
++    while (true) {
++        xSemaphoreTake(self->dl_mutex_, portMAX_DELAY);
++        if (self->want_anim_url_ == self->have_anim_url_) {
++            self->anim_dl_running_ = false;
++            xSemaphoreGive(self->dl_mutex_);
++            break;
++        }
++        std::string base = self->have_anim_url_ = self->want_anim_url_;
++        xSemaphoreGive(self->dl_mutex_);
++        std::string url = base + (base.find('?') == std::string::npos ? "?" : "&") + "size=" + std::to_string(C);
++        auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
++        if (!http->Open("GET", url)) {
++            ESP_LOGE(TAG, "rh dial: cannot open %s", url.c_str());
++            continue;
++        }
++        auto status = http->GetStatusCode();
++        size_t len = http->GetBodyLength();
++        // A pack for a 360 px screen is about 1 MB (tools/dial_frames.py); refuse anything past 4 MB.
++        if (!status || *status != 200 || len < 8 || len > 4 * 1024 * 1024) {
++            ESP_LOGW(TAG, "rh dial: no animation at %s (status %d, %u bytes): keeping the still picture", url.c_str(),
++                     status ? *status : -1, (unsigned)len);
++            http->Close();
++            continue;
++        }
++        auto data = static_cast<uint8_t*>(heap_caps_malloc(len, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
++        if (!data) {
++            ESP_LOGE(TAG, "rh dial: no PSRAM for the %u byte animation", (unsigned)len);
++            http->Close();
++            continue;
++        }
++        size_t got = 0;
++        while (got < len) {
++            auto n = http->Read(reinterpret_cast<char*>(data) + got, len - got);
++            if (!n || *n <= 0) break;
++            got += *n;
++        }
++        http->Close();
++        auto anim = std::make_unique<RhDialAnim>();
++        if (got != len || !anim->Load(data, len, C)) {   // Load owns data from here
++            ESP_LOGE(TAG, "rh dial: animation %s unusable (%u/%u bytes)", url.c_str(), (unsigned)got, (unsigned)len);
++            continue;
++        }
++        self->InstallAnim(std::move(anim));
++    }
++    vTaskDelete(nullptr);
++}
++
++// Called from the download task: buffers and mouth crops are prepared outside the LVGL lock.
++void RhDialDisplay::InstallAnim(std::unique_ptr<RhDialAnim> anim) {
++    const int C = metrics_.canvas();
++    const size_t frame = (size_t)C * C * 2;
++    // stop the decode task before touching buffers or dropping an older pack it may be reading
++    anim_installing_ = true;
++    anim_want_ = -1;
++    while (anim_busy_) vTaskDelay(1);
++    struct Done { std::atomic<bool>& f; ~Done() { f = false; } } done{anim_installing_};
++    for (auto& b : anim_buf_) {
++        if (!b) b = static_cast<uint8_t*>(heap_caps_aligned_alloc(16, frame, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
++        if (!b) {
++            ESP_LOGE(TAG, "rh dial: no PSRAM for animation frames");
++            return;
++        }
++    }
++    uint8_t* mouths[3] = {};
++    const auto& r = anim->mouth();
++    if (anim->Count(RhDialAnim::kMouth) == 3) {
++        for (int i = 0; i < 3; i++) {
++            mouths[i] = static_cast<uint8_t*>(heap_caps_aligned_alloc(16, (size_t)r.w * r.h * 2 + 64, MALLOC_CAP_SPIRAM));
++            if (!mouths[i] || !anim->Decode(RhDialAnim::kMouth, i, mouths[i], (size_t)r.w * r.h * 2 + 64)) {
++                for (auto& m : mouths) { if (m) heap_caps_free(m); m = nullptr; }
++                break;
++            }
++        }
++    }
++    // the first idle frame goes into the buffer not on screen before the swap: never a blank picture
++    const int slot = anim_ ? 1 - anim_front_ : 0;
++    if (!anim->Decode(RhDialAnim::kIdle, 0, anim_buf_[slot], frame)) {
++        for (auto& m : mouths) if (m) heap_caps_free(m);
++        return;
++    }
++    DisplayLockGuard lock(this);
++    for (int i = 0; i < 2; i++) {
++        anim_dsc_[i] = {};
++        anim_dsc_[i].header.magic = LV_IMAGE_HEADER_MAGIC;
++        anim_dsc_[i].header.cf = LV_COLOR_FORMAT_RGB565;
++        anim_dsc_[i].header.w = C;
++        anim_dsc_[i].header.h = C;
++        anim_dsc_[i].header.stride = C * 2;
++        anim_dsc_[i].data = anim_buf_[i];
++        anim_dsc_[i].data_size = frame;
++    }
++    for (int i = 0; i < 3; i++) {
++        if (mouth_px_[i]) heap_caps_free(mouth_px_[i]);
++        mouth_px_[i] = mouths[i];
++    }
++    anim_ = std::move(anim);
++    anim_front_ = slot;
++    anim_kind_ = RhDialAnim::kIdle;
++    anim_idx_ = 0;
++    mouth_shown_ = -1;
++    anim_ready_ = -1;
++    anim_want_ = -1;
++    lv_image_cache_drop(&anim_dsc_[slot]);
++    lv_image_set_src(face_base_, &anim_dsc_[slot]);
++    ClearThinkFace();   // the thinking loop replaces the thinking picture
++    if (!anim_task_) xTaskCreate(AnimDecodeTask, "rh_dial_dec", 6144, this, 3, &anim_task_);
++    ESP_LOGI(TAG, "rh dial: animated face on (%d fps)", anim_->fps());
++}
++
++void RhDialDisplay::AnimDecodeTask(void* arg) {
++    auto self = static_cast<RhDialDisplay*>(arg);
++    const int C = self->metrics_.canvas();
++    while (true) {
++        ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
++        self->anim_busy_ = true;
++        int want = self->anim_want_.load();
++        if (want >= 0 && self->anim_ && !self->anim_installing_) {
++            int64_t t0 = esp_timer_get_time();
++            // the back buffer is the one not on screen; Tick only swaps after anim_ready_ says so
++            uint8_t* back = self->anim_buf_[1 - self->anim_front_];
++            if (self->anim_->Decode((RhDialAnim::Kind)(want >> 8), want & 0xff, back, (size_t)C * C * 2)) {
++                self->stat_decode_us_ += esp_timer_get_time() - t0;
++                self->stat_decodes_++;
++                self->anim_ready_ = want;
++            }
++        }
++        self->anim_busy_ = false;
++    }
++}
++
++void RhDialDisplay::TickAnim(int64_t now_ms) {
++    const int C = metrics_.canvas();
++    int kind = state_ == kThinking ? RhDialAnim::kThink : state_ == kSpeaking ? RhDialAnim::kTalk : RhDialAnim::kIdle;
++    if (anim_->Count((RhDialAnim::Kind)kind) == 0) kind = RhDialAnim::kIdle;
++    int n = anim_->Count((RhDialAnim::Kind)kind);
++    // next frame: the following one of this loop, or the first of the new state's loop
++    int next = kind == anim_kind_ ? (anim_idx_ + 1) % n : 0;
++    bool still = kind == RhDialAnim::kTalk && kind == anim_kind_;   // speaking: one still picture
++    if (!still) {
++        int want = Want(kind, next);
++        if (anim_want_.load() != want && anim_ready_.load() != want) {
++            anim_want_ = want;
++            xTaskNotifyGive(anim_task_);
++        }
++        bool due = now_ms >= anim_due_ms_ || kind != anim_kind_;
++        if (due && anim_ready_.load() == want) {
++            anim_front_ = 1 - anim_front_;
++            lv_image_cache_drop(&anim_dsc_[anim_front_]);
++            lv_image_set_src(face_base_, &anim_dsc_[anim_front_]);
++            anim_kind_ = kind;
++            anim_idx_ = next;
++            anim_ready_ = -1;
++            mouth_shown_ = -1;
++            anim_due_ms_ = now_ms + 1000 / anim_->fps();
++            stat_anim_frames_++;
++            // ask for the one after right away: decoding runs while this frame is shown
++            int after = kind == RhDialAnim::kTalk ? -1 : Want(kind, (next + 1) % n);
++            if (after >= 0) {
++                anim_want_ = after;
++                xTaskNotifyGive(anim_task_);
++            }
++        }
++    }
++    // mouth: copy the crop for this level into the picture on screen and repaint just that block
++    if (anim_kind_ == RhDialAnim::kTalk && mouth_px_[0]) {
++        int lv = (int)(lvl_ * 1000);
++        int m = mouth_shown_ < 0 ? 0 : mouth_shown_;
++        if (m == 2) m = lv > kMouthOpenDown ? 2 : lv > kMouthHalfDown ? 1 : 0;
++        else if (m == 1) m = lv > kMouthOpenUp ? 2 : lv > kMouthHalfDown ? 1 : 0;
++        else m = lv > kMouthOpenUp ? 2 : lv > kMouthHalfUp ? 1 : 0;
++        if (m != mouth_shown_) {
++            const auto& r = anim_->mouth();
++            uint8_t* dst = anim_buf_[anim_front_];
++            for (int y = 0; y < r.h; y++) {
++                memcpy(dst + ((size_t)(r.y + y) * C + r.x) * 2, mouth_px_[m] + (size_t)y * r.w * 2, (size_t)r.w * 2);
++            }
++            lv_image_cache_drop(&anim_dsc_[anim_front_]);
++            lv_area_t a = {(int32_t)(metrics_.canvas_x() + r.x), (int32_t)(metrics_.canvas_y() + r.y),
++                           (int32_t)(metrics_.canvas_x() + r.x + r.w - 1), (int32_t)(metrics_.canvas_y() + r.y + r.h - 1)};
++            lv_obj_invalidate_area(face_base_, &a);
++            mouth_shown_ = m;
++            stat_anim_frames_++;
++        }
++    }
++}
++
+ #endif  // CONFIG_RH_DIAL
+diff --git a/main/display/rh_dial_display.h b/main/display/rh_dial_display.h
+index fbcd87d..baa894f 100644
+--- a/main/display/rh_dial_display.h
++++ b/main/display/rh_dial_display.h
+@@ -20,6 +20,7 @@
+ 
+ #include "lcd_display.h"
+ #include "lvgl_image.h"
++#include "rh_dial_anim.h"
+ 
+ #include <cn_dial/dial_metrics.h>   // conest firmware/dial: screen profile + canvas units -> px
+ #include <cn_dial/dial_overlay.h>   // conest firmware/dial: name tag, status chip, arc, bubble
+@@ -134,6 +135,33 @@ private:
+     std::string have_base_url_, have_think_url_;   // what is on screen
+     bool dl_running_ = false;
+ 
++    // Animated face (rh_dial_anim.h): when the host sends "anim", the pack is downloaded into PSRAM
++    // and replaces the still picture. A decode task fills the back buffer with the next frame of the
++    // current loop; Tick swaps it in at the pack's fps. Speaking: the still once, then only the
++    // mouth block is copied in from the three decoded mouth crops by playback level.
++    std::unique_ptr<RhDialAnim> anim_;          // touched with the LVGL lock held, once installed
++    uint8_t* anim_buf_[2] = {};
++    lv_image_dsc_t anim_dsc_[2] = {};
++    int anim_front_ = 0;
++    uint8_t* mouth_px_[3] = {};
++    int mouth_shown_ = -1;
++    int anim_kind_ = -1, anim_idx_ = 0;          // what is on screen
++    int64_t anim_due_ms_ = 0;
++    TaskHandle_t anim_task_ = nullptr;
++    std::atomic<int> anim_want_{-1};            // (kind << 8 | index) the decode task should make
++    std::atomic<int> anim_ready_{-1};           // (kind << 8 | index) now in the back buffer
++    std::atomic<bool> anim_busy_{false};        // decode task is inside Decode
++    std::atomic<bool> anim_installing_{false};  // a new pack is going in: no decoding
++    int64_t stat_decode_us_ = 0;
++    int stat_decodes_ = 0, stat_anim_frames_ = 0;
++    std::string want_anim_url_, have_anim_url_;
++    bool anim_dl_running_ = false;
++    void RequestAnim(const std::string& url);
++    static void AnimDownloadTask(void* arg);
++    static void AnimDecodeTask(void* arg);
++    void InstallAnim(std::unique_ptr<RhDialAnim> anim);
++    void TickAnim(int64_t now_ms);
++
+     static void TickCb(lv_timer_t* t);
+     static void EdgeDrawCb(lv_event_t* e);
+     void BuildRing();
+-- 
+2.54.0 (Apple Git-157)
+

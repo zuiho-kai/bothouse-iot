@@ -43,4 +43,6 @@ project = "my-project"         # bothouse 里这个角色的项目名
 color = "#f0a020"
 avatar = "avatars/ju.jpg"      # 相对本文件；表盘头像
 # avatar_thinking = "avatars/ju-thinking.jpg"
+skins = "skins/ju"             # 会动的表盘：皮肤目录（仓里自带橘的两款：standard 标准、pastel 油画棒），见 docs/dial-skins.md
+skin = "pastel"                # 默认皮肤；网页 /dial?skin=standard 可以临时换着看
 # key = ""                     # 这块板自己的钥匙（可选）；用 tools/board-nvs.py --ws-token-gen 生成并写进板子
