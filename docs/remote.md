@@ -69,7 +69,18 @@ python tools/board-nvs.py --port /dev/cu.usbmodemXXXX --ws-token-gen          # 
 
 只看板子 NVS（密码显示 `<略>`）：`--show`。
 
-## 出门测试
+## 先在本机模拟一遍（不用板子、不用服务器）
+
+```bash
+python tools/cloud_sim.py            # 有 nginx 就用它加载上面那份 location 配置，没有就用内置转发
+```
+
+它在本机回环地址上搭出整条链路：自签证书的「云端」（随机前缀）→ 模拟的反向隧道 → `remote = true` 的设备服务 → 假 bothouse，
+再让假板子照真板的连法（固件 2.5.2、协议 v1、先 OTA 再 wss、连上发 listen/start）从「外网」连进来，逐项打 `OK`/`FAIL`：
+没登记 / 没钥匙 / 钥匙错的板子被拒、钥匙对的连上，说一句话 bothouse 收到、回话变成语音推回板子，板子和网页表盘都走
+idle→thinking→speaking→idle，隧道断了板子掉线、恢复后重连上还能再说一句。CI（`.github/workflows/ci.yml`）每次推送都用 nginx 跑一遍。
+
+## 出门测试（真板子）
 
 1. 手机开热点，板子换充电宝带出门（离开家里 Wi-Fi）。
 2. 板子开机连上热点，屏幕回到角色表盘。

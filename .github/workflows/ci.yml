@@ -1,0 +1,26 @@
+# 每次推送和 PR：跑单测，再跑云端模拟自检（tools/cloud_sim.py）。
+# 自检用 apt 装的 nginx 加载 deploy/remote/nginx-location.conf.example，扮演云服务器，验的就是部署时用的那份配置；不连任何线上服务。
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg nginx
+          pip install -e "server[test]"
+      - name: unit tests
+        run: cd server && python -m pytest -q
+      - name: cloud sim (nginx)
+        run: python tools/cloud_sim.py --proxy nginx
