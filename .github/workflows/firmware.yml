@@ -1,0 +1,60 @@
+# 打 tag（v*）时编固件并上传到这个 tag 的 Release。设备服务配 [device] firmware_release 后会从最新 Release 取固件给板子升级。
+# 产物只有编译出来的镜像：NVS（Wi-Fi、钥匙、OTA 地址）不在里面，板子升级时也不碰 NVS。
+name: firmware
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: espressif/idf:v6.1
+    strategy:
+      matrix:
+        board: ["spotpear/sp-esp32-s3-1.28-box"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: build
+        shell: bash
+        env:
+          # 编进固件的默认 OTA 地址只是占位：每块板用 tools/board-nvs.py --ota-url 或开机热点页「高级选项」写自己的地址
+          OTA_URL: http://bothouse-iot.local:8791/xiaozhi/ota/
+          IDF_CCACHE_ENABLE: "0"
+        run: |
+          . $IDF_PATH/export.sh
+          git config --global --add safe.directory '*'
+          firmware/scripts/build.sh "${{ matrix.board }}" "$RUNNER_TEMP/xiaozhi-esp32"
+          name=$(echo "${{ matrix.board }}" | tr '/' '-')
+          mkdir -p dist
+          cp "$RUNNER_TEMP/out/xiaozhi.bin" "dist/xiaozhi-$name.bin"
+          cp "$RUNNER_TEMP/out/merged-binary.bin" "dist/xiaozhi-$name-merged.bin"
+          cp "$RUNNER_TEMP/out/ota_data_initial.bin" "dist/ota_data_initial-$name.bin"
+          (cd dist && sha256sum *.bin > "SHA256SUMS-$name")
+          ls -l dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: dist/
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: firmware
+          path: dist
+      - name: upload to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat dist/SHA256SUMS-* > dist/SHA256SUMS && rm dist/SHA256SUMS-*
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --title "$GITHUB_REF_NAME" --notes "固件：xiaozhi-esp32 v2.5.2 + bothouse-iot 补丁。板子用 xiaozhi-<板型>.bin 走 Wi-Fi 升级；merged 整包只给全新的板（会清 Wi-Fi）。"
+          gh release upload "$GITHUB_REF_NAME" dist/* -R "$GITHUB_REPOSITORY" --clobber

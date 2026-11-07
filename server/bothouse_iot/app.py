@@ -24,6 +24,7 @@ from . import speech
 from .config import Config
 from .dial import Dial
 from .mic import BoardMic
+from .release import DEFAULT_ASSET, ReleaseFirmware
 from .xiaozhi import XiaozhiServer
 
 CAPABILITIES = ["text", "audio", "typing"]
@@ -54,6 +55,15 @@ class App:
         if cfg.firmware:
             self.xz.firmware = cfg.rel(cfg.firmware)
             self.xz.fw_asked_file = cfg.rel(cfg.data_dir) / "firmware-asked.txt"
+        self.release: ReleaseFirmware | None = None
+        if cfg.firmware_release:
+            self.xz.fw_asked_file = cfg.rel(cfg.data_dir) / "firmware-asked.txt"
+            self.release = ReleaseFirmware(cfg.firmware_release, cfg.firmware_asset or DEFAULT_ASSET,
+                                           cfg.rel(cfg.data_dir) / "firmware", self._new_firmware, self.log)
+        if cfg.require_key:
+            for b in cfg.boards:
+                if not b.key:
+                    self.log(f"[xiaozhi] {b.role} 的板子没配 key，require_key 开着时它连不上（tools/board-nvs.py --ws-token-gen）")
         self.dial = Dial(self.xz, cfg, self.log)
         self.mic = BoardMic(self._on_utterance, self.log)
         self.xz.on_mic, self.xz.on_mic_end = self.mic.on_packet, self.mic.on_end
@@ -79,7 +89,15 @@ class App:
         for role in self.boards:
             self._queues[role] = asyncio.Queue()
             asyncio.ensure_future(self._speaker(role))
+        if self.release is not None:
+            asyncio.ensure_future(self.release.run(self._stop))
         await self._bothouse_loop()
+
+    def _new_firmware(self, path, tag: str) -> None:
+        """Release 里有了新固件：换上，在线的板子各查一次（不一样就让它在空闲时升级）。"""
+        self.xz.firmware = path
+        self.log(f"[firmware] 用 {tag} 的固件给板子升级：{path.name}")
+        self.xz.recheck_firmware()
 
     def stop(self) -> None:
         self._stop.set()
