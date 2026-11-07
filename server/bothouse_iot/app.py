@@ -1,8 +1,8 @@
 """设备服务 + bothouse 适配器：把板子接进 bothouse，当一个能收发文字和音频的外部平台。
 
     板子 ──小智协议(OTA+WS)──▶ XiaozhiServer ──▶ App ──bridge-protocol WS──▶ bothouse ──▶ 绑定项目的 bot
-    板子说话：麦克风 Opus → BoardMic 切句 → 转文字（交 bothouse [speech]，或本地 stt_command）→ message
-    bot 回话：reply 文本 / audio → 合成（bothouse [tts] 发来的 audio，或本地 tts_command）→ Opus → 对应板子
+    板子说话：麦克风 Opus → BoardMic 切句 → 转文字（默认交 bothouse [speech]；它没配就退到本机 stt_command）→ message
+    bot 回话：reply 文本 / audio → 声音（默认用 bothouse [tts] 发来的 audio；等不到就退到本机 tts_command）→ Opus → 对应板子
 
 协议：bothouse bridge/docs/bridge-protocol.zh-CN.md（register / message / reply / audio / typing / ping）。
 一块板绑一个角色、一个 bothouse 项目（配置 [[boards]]），消息里带 project 字段路由到那个项目。
@@ -31,6 +31,8 @@ PING_SEC = 25.0               # 协议要求至少 30 秒一次
 BACKOFF_MIN, BACKOFF_MAX = 1.0, 60.0   # 协议「断线重连」：起始 1 秒，最大 60 秒
 QUIET_LOG_SEC = 600.0         # 一直连不上时，多久才再记一行（不刷屏）
 PLAY_TIMEOUT_SEC = 180.0
+AUDIO_WAIT_SEC = 20.0         # 回话到了以后等 bothouse [tts] 音频多久；等不到就退到本机合成
+NO_STT_MARK = "[speech]"      # bothouse 没配 [speech] 时回的提示里带这个（MsgVoiceNotEnabled）
 NOTICE_PREFIXES = ("🎙",)     # bothouse 转写时发的提示（正在转写 / 转写结果），不念出来
 _FOOTER = re.compile(r"\n\s*\n\s*\*[^*\n]+\*\s*$")   # bothouse 回复末尾的状态脚注（*模型 · 额度 · 目录*）
 _MD = re.compile(r"[*_`#>]+")
@@ -63,6 +65,11 @@ class App:
         self._subtitle: dict[str, str] = defaultdict(str)
         self._busy: set[str] = set()      # 正在合成或播放的角色（表盘不在这期间回待机）
         self._stop = asyncio.Event()
+        # 语音默认交给 bothouse；发现 bothouse 没配转写 / 合成时退到本机命令，直到下次重新注册
+        self._local_stt = cfg.stt == "command"
+        self._local_tts = cfg.tts == "command"
+        self._last_wav: dict[str, bytes] = {}
+        self._audio_wait: dict[str, asyncio.TimerHandle] = {}
         self.sent: list[dict] = []        # 发给 bothouse 的消息（测试、排错用）
 
     # ---------- 起停 ----------
@@ -146,6 +153,7 @@ class App:
         if t == "register_ack":
             if d.get("ok"):
                 self.registered.set()
+                self._local_stt, self._local_tts = self.cfg.stt == "command", self.cfg.tts == "command"
                 self.log(f"[bothouse] 注册成功：平台 {self.cfg.platform}，能力 {','.join(CAPABILITIES)}，"
                          f"板子 {', '.join(f'{b.role}→{b.project}' for b in self.cfg.boards) or '无'}")
             else:
@@ -157,33 +165,68 @@ class App:
         if t == "reply":
             raw = str(d.get("content") or "")
             self.log(f"[bothouse] → {role}：{raw[:80]!r}")
-            if role is None or raw.startswith(NOTICE_PREFIXES):
+            if role is None:
+                return
+            if raw.startswith(NOTICE_PREFIXES):
+                if NO_STT_MARK in raw and not self._local_stt:
+                    await self._stt_fallback(role)
                 return
             text = speakable(raw)
             if not text:
                 return
-            if self.cfg.tts == "command":
+            if self._local_tts:
                 self._queues[role].put_nowait((text, None))
-            else:   # 声音等 bothouse [tts] 发来的 audio，文字先记下当字幕
-                self._subtitle[role] = text
+            else:   # 声音等 bothouse [tts] 发来的 audio，文字先记下当字幕；等不到就本机合成
+                self._subtitle[role] = (self._subtitle[role] + " " + text).strip()
+                if role not in self._audio_wait:
+                    self._audio_wait[role] = asyncio.get_running_loop().call_later(
+                        AUDIO_WAIT_SEC, self._tts_fallback, role)
         elif t == "audio":
             if role is None:
                 return
             data = base64.b64decode(d.get("data") or "")
             self.log(f"[bothouse] → {role}：音频 {len(data)} 字节（{d.get('format')}）")
-            if self.cfg.tts != "command" and data:
+            h = self._audio_wait.pop(role, None)
+            if h is not None:
+                h.cancel()
+            if not self._local_tts and data:
                 self._busy.add(role)
             self._queues[role].put_nowait((self._subtitle.pop(role, ""), data))
         elif t == "typing_start":
             if role is not None:
                 self.dial.set(role, "thinking")
         elif t == "typing_stop":
-            if role is not None and role not in self._busy and self._queues[role].empty():
+            if role is not None and role not in self._busy and role not in self._audio_wait and self._queues[role].empty():
                 self.dial.set(role, "idle")
         elif t == "error":
             self.log(f"[bothouse] 错误 {d.get('code')}：{d.get('message')}")
         else:
             self.log(f"[bothouse] 收到不处理的消息 {t}")
+
+    def _tts_fallback(self, role: str) -> None:
+        """回话到了 AUDIO_WAIT_SEC 秒还没等到 bothouse 的音频：当它没配 [tts]，改用本机合成。"""
+        self._audio_wait.pop(role, None)
+        text = self._subtitle.pop(role, "")
+        cmd = speech.tts_cmd(self.cfg.tts_command)
+        if not cmd:
+            self.log(f"[speak] bothouse 没发来 {role} 的语音，本机也没有合成命令（配 speech.tts_command），这句只显示不念")
+            return
+        if not self._local_tts:
+            self.log(f"[speak] {int(AUDIO_WAIT_SEC)} 秒没等到 bothouse 的语音（它可能没配 [tts]），改用本机合成：{cmd[0]}")
+            self._local_tts = True
+        if text:
+            self._queues[role].put_nowait((text, None))
+
+    async def _stt_fallback(self, role: str) -> None:
+        """bothouse 回了「语音未启用」：它没配 [speech]，改用本机转写，并把刚才那句重转一次。"""
+        if not self.cfg.stt_command:
+            self.log("[mic] bothouse 没配 [speech]，本机也没有转写命令（配 speech.stt_command），板子说的话发不出去")
+            return
+        self.log(f"[mic] bothouse 没配 [speech]，改用本机转写：{self.cfg.stt_command[0]}")
+        self._local_stt = True
+        wav = self._last_wav.pop(role, None)
+        if wav is not None:
+            await self._utterance(role, wav)
 
     def _role_of(self, d: dict) -> str | None:
         ctx = d.get("reply_ctx")
@@ -221,7 +264,7 @@ class App:
 
     async def _utterance(self, role: str, wav: bytes) -> None:
         self.log(f"[mic] {role} 的板子说完一句（{(len(wav) - 44) / 32000:.1f} 秒）")
-        if self.cfg.stt == "command":
+        if self._local_stt:
             try:
                 text = await asyncio.get_running_loop().run_in_executor(None, speech.transcribe, self.cfg.stt_command, wav)
             except Exception as e:
@@ -230,6 +273,7 @@ class App:
                 return self.log(f"[mic] {role} 这句没转出字")
             await self.send_user(role, text=text)
         else:
+            self._last_wav[role] = wav
             await self.send_user(role, wav=wav)
 
     # ---------- 放音 ----------
@@ -245,7 +289,8 @@ class App:
             self._busy.add(role)
             try:
                 if audio is None:
-                    audio = await asyncio.get_running_loop().run_in_executor(None, speech.synth, self.cfg.tts_command, text)
+                    audio = await asyncio.get_running_loop().run_in_executor(
+                        None, speech.synth, speech.tts_cmd(self.cfg.tts_command), text)
                 await self.play(role, text, audio)
             except Exception as e:
                 self.log(f"[speak] {role} 这句没播成：{e!r}")

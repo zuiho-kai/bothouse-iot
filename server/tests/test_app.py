@@ -61,3 +61,42 @@ def test_segmenter_cuts_one_utterance():
     s.push(bytes(VAD_FRAME_BYTES) * 5 + loud * 30)
     s.flush()
     assert len(out) == 1 and out[0][:4] == b"RIFF"
+
+
+async def test_tts_falls_back_to_local_when_bothouse_sends_no_audio(tmp_path, monkeypatch):
+    monkeypatch.setattr(appmod, "AUDIO_WAIT_SEC", 0.05)
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+    a.cfg.tts_command = ["fake-tts"]
+    a._queues["ju"] = asyncio.Queue()
+    await a._from_bothouse({"type": "reply", "reply_ctx": "ju", "content": "你好"})
+    assert a._queues["ju"].empty()          # 先等 bothouse 的音频
+    await asyncio.sleep(0.1)
+    assert a._queues["ju"].get_nowait() == ("你好", None)   # 等不到：本机合成
+    assert a._local_tts
+    await a._from_bothouse({"type": "reply", "reply_ctx": "ju", "content": "第二句"})
+    assert a._queues["ju"].get_nowait() == ("第二句", None)  # 之后直接本机合成
+
+
+async def test_tts_uses_bothouse_audio_when_it_arrives(tmp_path, monkeypatch):
+    monkeypatch.setattr(appmod, "AUDIO_WAIT_SEC", 0.05)
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+    a._queues["ju"] = asyncio.Queue()
+    await a._from_bothouse({"type": "reply", "reply_ctx": "ju", "content": "你好"})
+    await a._from_bothouse({"type": "audio", "reply_ctx": "ju", "data": "AAAA", "format": "mp3"})
+    await asyncio.sleep(0.1)
+    assert a._queues["ju"].get_nowait() == ("你好", b"\x00\x00\x00")
+    assert a._queues["ju"].empty() and not a._local_tts
+
+
+async def test_stt_falls_back_when_bothouse_has_no_speech(tmp_path):
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+    a.cfg.stt_command = ["fake-stt"]
+    seen = []
+
+    async def fake_utt(role, wav):
+        seen.append((role, wav, a._local_stt))
+    a._last_wav["ju"] = b"wav"
+    a._utterance = fake_utt
+    await a._from_bothouse({"type": "reply", "reply_ctx": "ju",
+                            "content": "🎙 语音消息未启用，请在 config.toml 中配置 `[speech]` 部分。"})
+    assert seen == [("ju", b"wav", True)]

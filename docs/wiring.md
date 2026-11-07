@@ -19,11 +19,14 @@ token = "一个强随机密钥"     # 设备服务用它连进来
 
 每个角色要有一个项目（`[[projects]]`），名字写进设备服务配置的 `[[boards]].project`。
 
-语音两种做法，二选一（设备服务 `[speech]` 里选）：
+语音默认交给 bothouse，bothouse 没配时自动退到本机命令（设备服务 `[speech]`）：
 
-- 交给 bothouse：bothouse 配 `[speech]`（转写）和 `[tts]`（`tts_mode = "always"`），设备服务 `stt = "bothouse"`、`tts = "bothouse"`。
+- 默认（`stt = "bothouse"`、`tts = "bothouse"`）：bothouse 配了 `[speech]`（转写）和 `[tts]`（`tts_mode = "always"`）时，
   板子的语音以 `audio` 发给 bothouse，bot 的回话由 bothouse 合成后以 `audio` 发回。
-- 本地命令：设备服务 `stt = "command"` / `tts = "command"`，配 `stt_command` / `tts_command`（见 `config.example.toml`）。
+  bothouse 没配 `[speech]`（回「语音未启用」）时，改用 `stt_command` 本机转写，刚才那句重转一次；
+  回话 20 秒没等到 bothouse 的音频时，改用 `tts_command` 本机合成（不写时用 macOS `say` 或 Linux `espeak-ng`）。
+  退过一次就一直用本机，直到设备服务重新连上 bothouse。
+- 只用本机命令：`stt = "command"` / `tts = "command"`，配 `stt_command` / `tts_command`（见 `config.example.toml`），
   bothouse 只收发文字。
 
 bothouse 在回话末尾加的状态脚注、Markdown 记号不会念出来；bothouse 的「正在转写」提示也不念。

@@ -3,7 +3,7 @@
     BOTHOUSE_BRIDGE_TOKEN=... python tools/e2e.py --bothouse ws://127.0.0.1:19810/bridge/ws --project iot-test
 
 假板子：按小智协议 OTA → WS hello → 上传一句话的 Opus（macOS `say` 合成）。转写用本地假命令（固定输出一句话），
-合成用 macOS `say`。通过条件：适配器注册成功、消息发到 bothouse 的项目、bot 的回话变成 Opus 帧推到假板子。
+合成用 macOS `say`。--speech bothouse 走默认路线：先交给 bothouse，它没配 [speech]/[tts] 时自动退到这两个本机命令。通过条件：适配器注册成功、消息发到 bothouse 的项目、bot 的回话变成 Opus 帧推到假板子。
 不碰真板子，不往任何聊天频道发消息（bothouse 侧应是隔离实例）。
 """
 from __future__ import annotations
@@ -42,10 +42,10 @@ data_dir = "{tmp}/data"
 url = "{a.bothouse}"
 platform = "iot"
 [speech]
-stt = "command"
+stt = "{a.speech}"
 stt_command = ["/bin/echo", "{HEARD}"]
-tts = "command"
-tts_command = ["say", "-o", "{{out}}", "{{text}}"]
+tts = "{a.speech}"
+{'tts_command = ["say", "-o", "{out}", "{text}"]' if a.speech == "command" else "# 不写 tts_command：退到本机自带的 say"}
 [[boards]]
 device = "{DEVICE}"
 role = "ju"
@@ -108,4 +108,6 @@ if __name__ == "__main__":
     ap.add_argument("--bothouse", default="ws://127.0.0.1:19810/bridge/ws")
     ap.add_argument("--project", default="iot-test")
     ap.add_argument("--timeout", type=float, default=60)
+    ap.add_argument("--speech", choices=["command", "bothouse"], default="command",
+                    help="bothouse：默认路线（交给 bothouse，它没配语音时退到本机命令）")
     sys.exit(asyncio.run(main(ap.parse_args())))

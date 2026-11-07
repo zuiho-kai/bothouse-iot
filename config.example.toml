@@ -16,15 +16,17 @@ token = ""                     # 同 bothouse [bridge] token；建议用环境�
 platform = "iot"               # 注册的平台名，session key = iot:<角色>:<板子>
 
 [speech]
+# 默认两样都交给 bothouse；bothouse 没配时自动退到下面的本机命令，所以没有语音服务也能先跑起来。
 # 板子说的话怎么转文字：
-#   "bothouse" = 把语音交给 bothouse，用它的 [speech] 转写（要在 bothouse 里配好 [speech]）
-#   "command"  = 本地命令转写，{in} 是一句话的 WAV（16k 单声道），文字打印到标准输出
+#   "bothouse" = 把语音交给 bothouse，用它的 [speech] 转写；bothouse 回「语音未启用」时改用 stt_command
+#   "command"  = 只用本机命令转写，{in} 是一句话的 WAV（16k 单声道），文字打印到标准输出
 stt = "bothouse"
 # stt_command = ["whisper-cli", "-m", "ggml-small.bin", "-l", "zh", "-nt", "-f", "{in}"]
 
 # bot 的回话怎么变成声音：
-#   "bothouse" = 用 bothouse [tts]（tts_mode = "always"）发来的音频；文字当字幕
-#   "command"  = 本地命令合成，{text} 是要念的话，音频写到 {out}（ffmpeg 读得懂的格式即可）
+#   "bothouse" = 用 bothouse [tts]（tts_mode = "always"）发来的音频，文字当字幕；20 秒等不到就改用 tts_command
+#   "command"  = 只用本机命令合成，{text} 是要念的话，音频写到 {out}（ffmpeg 读得懂的格式即可）
+# tts_command 不写时用本机自带的：macOS say，Linux espeak-ng / espeak。
 tts = "bothouse"
 # tts_command = ["say", "-o", "{out}", "{text}"]          # macOS 自带
 
