@@ -1,0 +1,9 @@
+firmware/.build/
+__pycache__/
+*.pyc
+.venv/
+data/
+*.local.toml
+config.toml
+.env
+*.egg-info/

@@ -1,0 +1,14 @@
+bothouse-iot
+Copyright 2026 the bothouse authors
+
+Licensed under the Apache License, Version 2.0 (see LICENSE), except where noted below.
+
+firmware/patches/ are modifications to xiaozhi-esp32 (https://github.com/78/xiaozhi-esp32),
+Copyright (c) 2025 Shenzhen Xinzhi Future Technology Co., Ltd., released under the MIT License.
+The upstream MIT license text is kept in firmware/LICENSE-xiaozhi-esp32 and applies to the
+upstream code the patches touch.
+
+server/bothouse_iot/xiaozhi.py implements the xiaozhi device protocol with reference to
+xiaozhi-esp32 docs and xinnan-tech/xiaozhi-esp32-server (MIT); no code is copied from the latter.
+
+firmware/components/cn_dial and cn_dial_lvgl (the role dial) are our own work, Apache-2.0.

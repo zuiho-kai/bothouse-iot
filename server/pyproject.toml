@@ -1,0 +1,23 @@
+[project]
+name = "bothouse-iot"
+version = "0.1.0"
+description = "bothouse-iot: device service for xiaozhi-protocol ESP32 boards, connected to bothouse as an external platform"
+license = "Apache-2.0"
+requires-python = ">=3.11"
+dependencies = ["aiohttp>=3.9"]
+
+[project.optional-dependencies]
+test = ["pytest>=8", "pytest-asyncio>=0.23"]
+
+[project.scripts]
+bothouse-iot = "bothouse_iot.__main__:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["bothouse_iot"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
