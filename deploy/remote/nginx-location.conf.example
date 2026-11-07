@@ -1,0 +1,13 @@
+# 加进云服务器已有的 443 server { ... } 里。<随机前缀> 换成 openssl rand -hex 12 的结果，和设备服务 public_url 里的一致。
+# 转到反向隧道在云服务器本机开的 18791 端口（只监听 127.0.0.1），去掉前缀后交给家里的设备服务。
+location /<随机前缀>/ {
+    proxy_pass http://127.0.0.1:18791/;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;         # 板子的 WebSocket
+    proxy_set_header Connection "upgrade";
+    proxy_set_header Host $host;
+    proxy_buffering off;                            # 网页表盘的 SSE 别攒着
+    proxy_read_timeout 300s;                        # 设备服务每 30 秒给板子发一次保活
+    proxy_send_timeout 300s;
+    client_max_body_size 1m;
+}

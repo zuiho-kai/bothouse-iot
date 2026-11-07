@@ -1,0 +1,12 @@
+# 家里的 Linux：systemctl --user enable --now bothouse-iot-tunnel。cloud 换成 ~/.ssh/config 里的服务器名（要免密登录）。
+[Unit]
+Description=bothouse-iot reverse tunnel to cloud
+After=network-online.target
+
+[Service]
+ExecStart=/usr/bin/ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=15 -o ServerAliveCountMax=3 -R 127.0.0.1:18791:127.0.0.1:8791 cloud
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=default.target

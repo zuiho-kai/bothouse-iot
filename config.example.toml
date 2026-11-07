@@ -1,13 +1,16 @@
 # bothouse-iot 设备服务配置示例。复制成 config.toml 再改（config.toml 不进仓库）。
-# 接线说明见 docs/wiring.md。
+# 接线说明见 docs/wiring.md；出门用见 docs/remote.md。网页表盘：http://<设备服务>:8791/dial
 
 [device]                       # 板子连的设备服务（小智协议：OTA + WebSocket）
 listen = "0.0.0.0"
 port = 8791                    # 板子的 OTA 地址 = http://<本机局域网 IP>:8791/xiaozhi/ota/
 public_url = ""                # 经反向代理从外网连时填对外地址，如 "https://example.com/iot"；局域网留空
+remote = false                 # true：出门也能用，板子经云端转发连回来（docs/remote.md）；要写 public_url，require_key 默认跟着打开
 token = ""                     # 没配 key 的板子共用的 token（局域网可留空）；也可用环境变量 BOTHOUSE_IOT_TOKEN
-require_key = false            # true：只放行配了 key 的板子（对外网开放时打开）
+# require_key = false          # true：只放行配了 key 的板子；不写时跟 remote 一样
 firmware = ""                  # 可选：编好的 xiaozhi.bin，板子连上时按 elf_sha256 比较，不一样就让它 Wi-Fi 升级
+# firmware_release = "zuiho-kai/bothouse-iot"   # 可选（和 firmware 二选一）：从这个仓最新 Release 取固件，每 6 小时查一次
+# firmware_asset = "xiaozhi-spotpear-sp-esp32-s3-1.28-box.bin"   # Release 里的哪个文件（默认这个板型）
 data_dir = "data"
 
 [bothouse]                     # bothouse 的外部适配器接口（config.toml 里 [bridge] enabled = true）
