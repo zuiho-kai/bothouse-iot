@@ -8,8 +8,9 @@
      "closed_band": [[x0,y0,x1,y1], ...],         从 closed 里取睫毛线的矩形，其余取 closed_skin
      "mouth_open": "gen_mouth.png",
      "crop": [x0, y0, size],                      上面几张 gen 是母图这块放大到 1024 后重画的
-     "eyes": [{"open": [cx,cy,rx,ry], "iris": [cx,cy,rx,ry], "lift": 7}, ...],   眼白+虹膜露出的椭圆、虹膜椭圆、往上看挪几像素
+     "eyes": [{"open": [cx,cy,rx,ry], "iris": [cx,cy,rx,ry], "lift": 7}, ...],   眼白+虹膜露出的椭圆、虹膜椭圆、往上看挪几像素（可加 "fill": "keep" 不补眼白）
      "eye_mask": [[x0,y0,x1,y1], ...],            闭眼贴片的范围（椭圆外接框）
+     "closed_keep_hair": true,                    可选：闭眼贴片里母图是头发的地方保留母图（整张重画的闭眼图会改动刘海时用）
      "mouth": [x0,y0,x1,y1],                      嘴的范围（椭圆外接框）
      "rig": {...}}                                原样写进 skin.json，见 docs/dial-skins.md
 母图原样作为 base.png，所以静止时和母图逐像素一致；差分只在各自小块里，羽化边，颜色对齐到母图。
@@ -103,8 +104,25 @@ def main(desc_path: str, out: str):
         band = np.asarray(Image.fromarray((band * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(3))).astype(np.float32)[..., None] / 255
         eye = c1 * band + c2 * (1 - band)
         a = np.asarray(ellipse_mask(size, D["eye_mask"], grow=2, blur=FEATHER)).astype(np.float32)
+        if D.get("closed_keep_hair"):
+            # 整张重画的闭眼图会顺手改动挡在眼上的刘海：眼睛椭圆外、母图是头发橙色的像素一律用母图。来源：油画棒皮肤实测，不留会露出白块
+            r, g, b = mom[..., 0], mom[..., 1], mom[..., 2]
+            hair = (r > 180) & (r - b > 110) & (g < r * 0.72)
+            inside = np.array(ellipse_mask(size, [(e["open"][0] - e["open"][2], e["open"][1] - e["open"][3], e["open"][0] + e["open"][2], e["open"][1] + e["open"][3]) for e in D["eyes"]])) > 0
+            keep = Image.fromarray(((hair & ~inside) * 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(5)).filter(ImageFilter.GaussianBlur(1.5))
+            a = a * (1 - np.asarray(keep).astype(np.float32) / 255)
+            # 纸色、纸纹也会被整体重画得略偏：只在闭眼图和母图明显不同（眼睛换成皮肤、睫毛线）的地方用闭眼图。阈值来源：油画棒皮肤实测，纸纹差 <15，眼睛处 >60
+            # 先把闭眼图的纸色校到母图：只拿两张都是纸 / 皮肤（亮、差异小）的像素算偏差，外圈含描线和头发会算歪
+            box = np.asarray(ellipse_mask(size, D["eye_mask"], grow=30)) > 0
+            same = box & (np.abs(eye - mom).mean(-1) < 12) & (mom.mean(-1) > 200)
+            if same.sum() > 100:
+                eye = np.clip(eye + (mom[same] - eye[same]).mean(0), 0, 255)
+            diff = np.abs(eye - mom).mean(-1)
+            gate = Image.fromarray(np.clip((diff - 22) / 25 * 255, 0, 255).astype(np.uint8)).filter(ImageFilter.MaxFilter(9)).filter(ImageFilter.GaussianBlur(3))
+            a = a * np.asarray(gate).astype(np.float32) / 255
         ring = (a > 10) & (a < 120)
-        eye = match_color(eye, mom, ring)
+        if not D.get("closed_keep_hair"):
+            eye = match_color(eye, mom, ring)
         add("eyes_closed", eye, a, bbox_of(D["eye_mask"], PAD + FEATHER * 2), 2)
 
     # 往上看：母图虹膜往上挪 lift 像素，露出的下沿补眼白
@@ -121,7 +139,8 @@ def main(desc_path: str, out: str):
         # 露出来的地方：眼白色（取这只眼眼白最亮的一截的中位数），上沿带一点虹膜投影
         white = mom[om & (mom.sum(-1) > 650)]
         wc = np.median(white, 0) if len(white) else np.array([245, 238, 240], np.float32)
-        th[ys[~ok], xs[~ok]] = wc
+        if e.get("fill") != "keep":   # "keep"：露出处留母图原样（眼睛下沿是描线不是眼白的画风用；油画棒皮肤实测补白会露一道白弧）
+            th[ys[~ok], xs[~ok]] = wc
         opens.append((cx - rx, cy - ry, cx + rx, cy + ry))
     a = np.asarray(ellipse_mask(size, opens, grow=1, blur=1.5)).astype(np.float32)
     add("eyes_think", th, a, bbox_of(opens, PAD), 1)
