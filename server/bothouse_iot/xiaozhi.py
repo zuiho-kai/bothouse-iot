@@ -161,6 +161,7 @@ class Board:
         # 板子 hello 里报的屏幕（新固件才有，字段见 conest firmware/dial ScreenProfile::ToJson）；
         # 现在只记下来写日志，不据此改行为。老固件没有，是 None。
         self.display: dict | None = None
+        self.base = ""                                # 板子取头像、下载固件用的服务地址（连上时记）
 
 
 class XiaozhiServer:
@@ -562,6 +563,14 @@ class XiaozhiServer:
         finally:
             self._fw_busy.discard(b.device)
 
+    def recheck_firmware(self) -> None:
+        """固件文件换了（比如从 Release 下载了新版）：在线的板子各查一次。事件循环里调。"""
+        if self.firmware is None:
+            return
+        for b in list(self.by_role.values()):
+            if not b.ws.closed and b.base:
+                self._spawn(self._check_firmware(b, b.base))
+
     async def _firmware_file(self, req: web.Request) -> web.Response:
         if self.firmware is None:
             raise web.HTTPNotFound()
@@ -687,11 +696,12 @@ class XiaozhiServer:
                     self.log(f"[xiaozhi] {role} 的板子重新连上，旧连接关掉")
                     await old.ws.close()
                 self.log(f"[xiaozhi] {role} 的板子 {dev} 连上了（协议 v{version}，{'经 ' + self.public_url if self.public_url else '局域网直连'}）")
-                self.on_board(role, self._base(req))   # 表盘：告诉板子它是谁
+                b.base = self._base(req)
+                self.on_board(role, b.base)   # 表盘：告诉板子它是谁
                 self.on_change()
                 self._spawn(self._read_volume(b))   # 读当前音量给网页显示（固件自己记着音量，不用下发）
                 if self.firmware is not None:
-                    self._spawn(self._check_firmware(b, self._base(req)))
+                    self._spawn(self._check_firmware(b, b.base))
         finally:
             for t in tasks:
                 t.cancel()

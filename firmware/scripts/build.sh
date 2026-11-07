@@ -53,5 +53,5 @@ mkdir -p "$OUT"
 cp build/xiaozhi.bin build/ota_data_initial.bin build/merged-binary.bin "$OUT"/
 cp build/bootloader/bootloader.bin build/partition_table/partition-table.bin "$OUT"/ 2>/dev/null || true
 cp sdkconfig "$OUT"/sdkconfig.used
-(cd "$OUT" && shasum -a 256 *.bin | tee SHA256SUMS)
+(cd "$OUT" && { command -v sha256sum >/dev/null && sha256sum *.bin || shasum -a 256 *.bin; } | tee SHA256SUMS)
 echo BUILD_DONE

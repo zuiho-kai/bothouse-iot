@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>角色表盘 · bothouse-iot</title>
+<style>
+  /* 网页圆屏表盘：和板子上的表盘同一套状态（待机 / 思考中 / 正在回答）。没有板子也能看角色在干什么。
+     /dial 并排显示所有角色；/dial?role=ju 只显示一个（黑底全屏，可放在平板或旧手机上当表盘）。 */
+  :root { --size:min(420px, 86vw); }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#eef0ee; color:#2b2d31; font:14px/1.5 -apple-system,"PingFang SC","Helvetica Neue",sans-serif; }
+  header { display:flex; align-items:center; gap:14px; padding:14px 24px; background:#fff; border-bottom:1px solid #e3e5e3; }
+  header h1 { margin:0; font-size:17px; }
+  #meta { color:#80848e; font-size:13px; }
+  #dials { display:flex; flex-wrap:wrap; justify-content:center; gap:24px; padding:24px; }
+  .card { background:#fff; border:1px solid #e3e5e3; border-radius:22px; padding:18px 26px; display:flex; flex-direction:column; align-items:center; gap:4px; }
+  .sub { color:#6d7178; font-size:13px; }
+  .bezel { width:calc(var(--size) + 20px); height:calc(var(--size) + 20px); border-radius:50%; padding:10px; margin:8px 0; position:relative;
+           background:linear-gradient(145deg,#e9eee9,#cfd8d1); box-shadow:0 18px 40px rgba(0,0,0,.18), inset 0 1px 2px rgba(255,255,255,.8); }
+  .bezel::after { content:""; position:absolute; inset:4px; border-radius:50%; pointer-events:none; opacity:0; transition:opacity .25s;
+                  box-shadow:0 0 calc(8px + 46px * var(--lvl, 0)) calc(1px + 9px * var(--lvl, 0)) var(--c); }
+  .screen { width:var(--size); height:var(--size); border-radius:50%; overflow:hidden; position:relative; background:#1b1d21; isolation:isolate; }
+  .face { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; transform-origin:50% 60%; transition:opacity .6s; }
+  .face.think { opacity:0; }
+  .initial { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; font-size:calc(var(--size) * .36); color:var(--c); font-weight:600; }
+  .vignette { position:absolute; inset:0; border-radius:50%; pointer-events:none; z-index:2; background:radial-gradient(circle, transparent 90%, rgba(0,0,0,.5) 100%); }
+  .glint { position:absolute; inset:0; z-index:3; pointer-events:none; border-radius:50%;
+           background:linear-gradient(115deg, transparent 38%, rgba(255,255,255,.16) 48%, transparent 58%); background-size:250% 100%; background-position:120% 0; }
+  .ring { position:absolute; inset:0; z-index:3; border-radius:50%; pointer-events:none; opacity:0; transition:opacity .3s;
+          -webkit-mask:radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px));
+                  mask:radial-gradient(farthest-side, transparent calc(100% - 6px), #000 calc(100% - 5px)); }
+  .pill { position:absolute; left:50%; transform:translateX(-50%); z-index:4; display:flex; align-items:center; gap:8px; white-space:nowrap;
+          color:#fff; background:rgba(28,30,34,.62); -webkit-backdrop-filter:blur(10px); backdrop-filter:blur(10px);
+          border:1px solid rgba(255,255,255,.14); border-radius:999px; font-size:17px; }
+  .pill.name { top:7%; padding:5px 18px; }
+  .pill.name .dot { width:9px; height:9px; border-radius:50%; background:#8a8f98; }
+  .card.board .pill.name .dot { background:#3ecf8e; box-shadow:0 0 6px #3ecf8e; }
+  .pill.status { bottom:13%; padding:6px 18px; opacity:0; transition:opacity .25s; }
+  .bars { display:flex; align-items:center; gap:3px; height:16px; }
+  .bars i { width:3px; height:100%; border-radius:2px; background:#3ecf8e; transform:scaleY(.3); }
+  .dots { display:none; gap:4px; }
+  .dots i { width:5px; height:5px; border-radius:50%; background:#fff; animation:dot 1.1s infinite ease-in-out; }
+  .dots i:nth-child(2) { animation-delay:.15s; } .dots i:nth-child(3) { animation-delay:.3s; }
+  .card[data-state="idle"] .face.base { animation:breathe 4.6s ease-in-out infinite; }
+  .card[data-state="idle"] .glint { animation:glint 9s ease-in-out infinite; }
+  .card[data-state="idle"] .pill.name .dot { animation:pulse 4.6s ease-in-out infinite; }
+  .card[data-state="thinking"] .face.think { opacity:1; animation:breathe 3.2s ease-in-out infinite; }
+  .card[data-state="thinking"] .ring { opacity:1; background:conic-gradient(from 0deg, transparent 0 62%, var(--c) 92%, #fff 100%); animation:spin 1.6s linear infinite; }
+  .card[data-state="thinking"] .pill.status { opacity:1; }
+  .card[data-state="thinking"] .dots { display:flex; }
+  .card[data-state="thinking"] .bars { display:none; }
+  .card[data-state="speaking"] .face.base { transform:scale(calc(1 + .02 * var(--lvl, 0))) translateY(calc(-3px * var(--lvl, 0))); }
+  .card[data-state="speaking"] .bezel::after { opacity:1; }
+  .card[data-state="speaking"] .pill.status { opacity:1; }
+  @keyframes breathe { 0%,100% { transform:scale(1) translateY(0); } 50% { transform:scale(1.018) translateY(-3px); } }
+  @keyframes glint { 0%,78% { background-position:120% 0; } 92%,100% { background-position:-30% 0; } }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.45; } }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  @keyframes dot { 0%,80%,100% { transform:translateY(0); opacity:.5; } 40% { transform:translateY(-5px); opacity:1; } }
+  body.single { background:#000; height:100vh; overflow:hidden; display:flex; align-items:center; justify-content:center; --size:100vmin; }
+  body.single header, body.single .sub { display:none; }
+  body.single #dials { padding:0; }
+  body.single .card { background:none; border:none; padding:0; }
+  body.single .bezel { width:var(--size); height:var(--size); padding:0; margin:0; background:none; box-shadow:none; }
+</style>
+</head>
+<body>
+<header><h1>角色表盘</h1><span id="meta">连接中…</span></header>
+<div id="dials"></div>
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]));
+const ONLY = new URLSearchParams(location.search).get("role");
+const STATUS_TEXT = {thinking: "思考中", speaking: "正在回答"};
+const BAR_N = 5;
+if (ONLY) document.body.classList.add("single");
+
+function card(m) {
+  let el = $("dial-" + m.role);
+  if (el) return el;
+  el = document.createElement("div");
+  el.className = "card"; el.id = "dial-" + m.role; el.dataset.state = "idle";
+  el.innerHTML = `
+    <div class="bezel"><div class="screen">
+      <div class="initial">${esc((m.name || m.role).slice(0, 1))}</div>
+      ${m.avatar ? `<img class="face base" alt="" src="${esc(m.avatar)}">` : ""}
+      ${m.avatar_think && m.avatar_think !== m.avatar ? `<img class="face think" alt="" src="${esc(m.avatar_think)}" onerror="this.remove()">` : ""}
+      <div class="vignette"></div><div class="glint"></div><div class="ring"></div>
+      <div class="pill name"><i class="dot"></i><span></span></div>
+      <div class="pill status"><span class="bars">${"<i></i>".repeat(BAR_N)}</span><span class="dots"><i></i><i></i><i></i></span><span class="txt"></span></div>
+    </div></div>
+    <div class="sub"></div>`;
+  $("dials").appendChild(el);
+  return el;
+}
+
+function apply(m) {
+  if (ONLY && m.role !== ONLY) return;
+  const el = card(m);
+  el.style.setProperty("--c", m.color || "#9aa0a6");
+  el.querySelector(".pill.name span").textContent = m.name || m.role;
+  el.classList.toggle("board", !!m.board);
+  el.querySelector(".sub").textContent = (m.board ? "板子在线" : "板子不在线") + " · " + ({idle: "待机"}[m.state] || STATUS_TEXT[m.state] || m.state);
+  el.dataset.state = m.state;
+  el.querySelector(".pill.status .txt").textContent = STATUS_TEXT[m.state] || "";
+}
+
+// 正在回答：没有音频可分析，用合成的起伏驱动光环和波形
+function frame(t) {
+  document.querySelectorAll('.card[data-state="speaking"]').forEach((el, k) => {
+    const lv = .35 + .3 * Math.abs(Math.sin(t / 110 + k)) * (.6 + .4 * Math.sin(t / 370 + k * 2));
+    el.style.setProperty("--lvl", lv.toFixed(3));
+    el.querySelectorAll(".bars i").forEach((b, i) => {
+      b.style.transform = `scaleY(${Math.max(.2, Math.min(1, lv * (.6 + .5 * Math.abs(Math.sin(t / 90 + i * 1.7)))))})`;
+    });
+  });
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+// 相对地址：页面在 /dial，事件在 /dial/events；经反向代理加了前缀也能用
+const es = new EventSource(location.pathname.replace(/\/?$/, "/") + "events");
+es.onopen = () => { $("meta").textContent = "已连上设备服务"; };
+es.onerror = () => { $("meta").textContent = "和设备服务断开，正在重连…"; };
+es.onmessage = (e) => { try { apply(JSON.parse(e.data)); } catch (err) { console.error(err); } };
+</script>
+</body>
+</html>

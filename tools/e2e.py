@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import asyncio
 import os
 import subprocess
@@ -16,6 +17,8 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+
+import aiohttp
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "server"))
@@ -58,18 +61,35 @@ key = "e2e-board-key"
     await asyncio.wait_for(app.registered.wait(), 15)
     ota = f"http://127.0.0.1:{app.xz.port}/xiaozhi/ota/"
 
-    # 每板一把钥匙：没钥匙的连不上，有钥匙的连得上
-    bad = FakeXiaozhi(ota, DEVICE)
-    await bad.ota()
-    assert "token" not in bad.ota_reply["websocket"], "配了 key 的板子 OTA 不该回 token"
-    try:
-        await bad.connect()
-        print("FAIL 没钥匙也连上了")
-        return 1
-    except Exception as e:
-        print(f"OK 没钥匙的板子被拒：{type(e).__name__}")
-    finally:
-        await bad.close()
+    # 网页表盘：开一条 SSE，记下 ju 的状态序列
+
+    http = aiohttp.ClientSession()
+    sse = await http.get(f"http://127.0.0.1:{app.xz.port}/dial/events")
+    web_states: list[str] = []
+
+    async def watch():
+        async for line in sse.content:
+            if line.startswith(b"data: "):
+                m = json.loads(line[6:])
+                if m.get("role") == "ju" and (not web_states or web_states[-1] != m["state"]):
+                    web_states.append(m["state"])
+    watcher = asyncio.ensure_future(watch())
+
+    # 每板一把钥匙：没钥匙、钥匙错的连不上，钥匙对的连得上
+    for wrong in (None, "wrong-key"):
+        bad = FakeXiaozhi(ota, DEVICE)
+        await bad.ota()
+        assert "token" not in bad.ota_reply["websocket"], "配了 key 的板子 OTA 不该回 token"
+        if wrong:
+            bad.ota_reply["websocket"]["token"] = wrong
+        try:
+            await bad.connect()
+            print(f"FAIL {'钥匙错' if wrong else '没钥匙'}也连上了")
+            return 1
+        except Exception as e:
+            print(f"OK {'钥匙错' if wrong else '没钥匙'}的板子被拒：{type(e).__name__}")
+        finally:
+            await bad.close()
     board = FakeXiaozhi(ota, DEVICE)
     await board.ota()
     board.ota_reply["websocket"]["token"] = "e2e-board-key"   # 真板子的钥匙在 NVS 里（tools/board-nvs.py --ws-token）
@@ -95,7 +115,15 @@ key = "e2e-board-key"
     print(f"发给 bothouse：{[(m['project'], m['session_key'], m['content']) for m in app.sent]}")
     print(f"板子收到字幕：{subs}")
     print(f"板子收到音频帧：{len(frames)} 帧（{len(frames) * 0.06:.1f} 秒），表盘状态序列：{dials}")
+    await asyncio.sleep(0.5)
+    watcher.cancel()
+    sse.close()
+    await http.close()
+    print(f"网页表盘 SSE 收到 ju 的状态序列：{web_states}")
     ok = bool(app.sent) and any(HEARD[:4] in (s or "") for s in subs) and len(frames) > 5
+    if web_states[:4] != ["idle", "thinking", "speaking", "idle"]:
+        print("FAIL 网页表盘没跟上 idle→thinking→speaking→idle")
+        ok = False
     print("E2E PASS" if ok else "E2E FAIL")
     await board.close()
     await app.close()
