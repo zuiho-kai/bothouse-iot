@@ -1,0 +1,131 @@
+{
+ "size": [
+  1024,
+  1024
+ ],
+ "textures": {
+  "base": "base.png",
+  "eyes_closed": "eyes_closed.png",
+  "eyes_think": "eyes_think.png",
+  "mouth_open": "mouth_open.png",
+  "mouth_half": "mouth_half.png"
+ },
+ "parts": [
+  {
+   "id": "base",
+   "tex": "base",
+   "box": [
+    0,
+    0,
+    1024,
+    1024
+   ],
+   "grid": [
+    32,
+    32
+   ],
+   "z": 0
+  },
+  {
+   "id": "eyes_closed",
+   "tex": "eyes_closed",
+   "box": [
+    376,
+    362,
+    240,
+    114
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 2,
+   "alpha": 0
+  },
+  {
+   "id": "eyes_think",
+   "tex": "eyes_think",
+   "box": [
+    413,
+    383,
+    184,
+    82
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 1,
+   "alpha": 0
+  },
+  {
+   "id": "mouth_open",
+   "tex": "mouth_open",
+   "box": [
+    478,
+    446,
+    72,
+    68
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 3,
+   "alpha": 0
+  },
+  {
+   "id": "mouth_half",
+   "tex": "mouth_half",
+   "box": [
+    478,
+    446,
+    72,
+    68
+   ],
+   "grid": [
+    4,
+    4
+   ],
+   "z": 3,
+   "alpha": 0
+  }
+ ],
+ "rig": {
+  "neck": [
+   510,
+   560
+  ],
+  "head": [
+   505,
+   420,
+   190,
+   170
+  ],
+  "headFeather": 0.3,
+  "hair": [
+   [
+    140,
+    470,
+    400,
+    930,
+    "L"
+   ],
+   [
+    640,
+    470,
+    920,
+    930,
+    "R"
+   ]
+  ],
+  "hairAmp": 10,
+  "bubble": [
+   300,
+   260
+  ],
+  "bubbleFill": "#fffaf2",
+  "bubbleEdge": ".16em solid #2a1d17"
+ },
+ "name": "涂鸦"
+}

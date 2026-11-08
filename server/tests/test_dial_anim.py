@@ -112,7 +112,7 @@ def test_envelope_follows_loudness(tmp_path):
 
 
 def test_repo_skins_are_complete():
-    """仓里自带的橘两款皮肤：skin.json 引用的贴图都在，差分贴片在母图范围内。"""
+    """仓里自带的橘几款皮肤：skin.json 引用的贴图都在，差分贴片在母图范围内。"""
     for d in sorted((ROOT / "skins" / "ju").iterdir()):
         s = json.loads((d / "skin.json").read_text())
         W, H = s["size"]
