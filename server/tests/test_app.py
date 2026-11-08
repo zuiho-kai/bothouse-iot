@@ -108,18 +108,21 @@ async def test_playbacks_are_serial_and_voice_start_stops_current(tmp_path, monk
     a._queues["jingyu"].put_nowait(("two", b""))
     sent = []
     stopped = []
+    first_started = asyncio.Event()
     second_started = asyncio.Event()
     monkeypatch.setattr(a.dial, "envelope", lambda audio: [])
     monkeypatch.setattr(a.dial, "set", lambda *args: None)
     def send(frames):
         sent.extend(frames)
-        if any(f["role"] == "jingyu" and f["event"] == "start" for f in frames):
+        if any(f["event"] == "start" and f["role"] == "ju" for f in frames):
+            first_started.set()
+        if any(f["event"] == "start" and f["role"] == "jingyu" for f in frames):
             second_started.set()
         return True
     monkeypatch.setattr(a.xz, "send", send)
     monkeypatch.setattr(a.xz, "stop_all", lambda: stopped.append(True))
     first = asyncio.create_task(a.play("ju", "one", b"audio"))
-    await asyncio.sleep(0)
+    await asyncio.wait_for(first_started.wait(), 1)
     second = asyncio.create_task(a.play("jingyu", "two", b"audio"))
     await asyncio.sleep(0)
     assert [f["role"] for f in sent if f["event"] == "start"] == ["ju"]
