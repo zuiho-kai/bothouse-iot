@@ -4,7 +4,7 @@ version = "0.1.0"
 description = "bothouse-iot: device service for xiaozhi-protocol ESP32 boards, connected to bothouse as an external platform"
 license = "Apache-2.0"
 requires-python = ">=3.11"
-dependencies = ["aiohttp>=3.9"]
+dependencies = ["aiohttp>=3.9", "pypinyin>=0.53"]
 
 [project.optional-dependencies]
 test = ["pytest>=8", "pytest-asyncio>=0.23"]

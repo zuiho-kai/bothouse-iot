@@ -45,8 +45,10 @@ from bothouse_iot.xiaozhi import encode_opus, find_ffmpeg  # noqa: E402
 from fake_board import FakeXiaozhi  # noqa: E402
 
 DEVICE = "aa:bb:cc:dd:ee:01"
+DEVICE_2 = "aa:bb:cc:dd:ee:02"
 STRANGER = "aa:bb:cc:dd:ee:99"
 KEY = "sim-" + secrets.token_hex(8)
+KEY_2 = "sim-" + secrets.token_hex(8)
 HEARD = "你好，今天天气怎么样"   # 沿用 tools/e2e.py
 NGINX_EXAMPLE = ROOT / "deploy" / "remote" / "nginx-location.conf.example"
 BAD_GATEWAY = web.HTTPBadGateway.status_code   # 上游连不上时回的，同 nginx
@@ -374,6 +376,12 @@ role = "ju"
 name = "橘"
 project = "iot-sim"
 key = "{KEY}"
+[[boards]]
+device = "{DEVICE_2}"
+role = "jingyu"
+name = "鲸鱼娘"
+project = "iot-sim"
+key = "{KEY_2}"
 ''')
     app = App(load(cfg), log=log)
     runner = asyncio.ensure_future(app.run())
@@ -429,6 +437,10 @@ key = "{KEY}"
         check("token" not in board.ota_raw["websocket"], "OTA 回包不带 token（不覆盖板子 NVS 里的钥匙）")
         await asyncio.sleep(0.3)
         check(any("ju 的板子" in s and "协议 v1" in s and "经 " + public in s for s in logs), "钥匙对的板子经云端连上（协议 v1）")
+        board2 = await board_connect(ota, DEVICE_2, KEY_2, a.timeout)
+        boards.append(board2)
+        check(any("jingyu 的板子" in s and "协议 v1" in s and "经 " + public in s for s in logs),
+              "第二块假板经云端连上（协议 v1）")
 
         # 2 语音往返 + 3 表盘
         packets = encode_opus(tone())
@@ -440,7 +452,33 @@ key = "{KEY}"
         check(web_states[:4] == ["idle", "thinking", "speaking", "idle"], "网页表盘（经云端 SSE）idle→thinking→speaking→idle",
               str(web_states))
 
-        # 4 断线重连
+        # 4 两块板同时有待播内容时，全屋播放锁保证时段不重叠。
+        first_seen, second_seen = len(board.got), len(board2.got)
+        first_play, second_play = await asyncio.gather(
+            app.play("ju", "第一段", tone()),
+            app.play("jingyu", "第二段", tone()),
+        )
+        await asyncio.sleep(0.1)
+        def play_interval(fake: FakeXiaozhi, seen: int):
+            events = [(t, d["state"]) for t, kind, d in fake.got[seen:]
+                      if kind == "json" and d.get("type") == "tts"
+                      and d.get("state") in ("start", "stop")]
+            starts = [t for t, state in events if state == "start"]
+            stops = [t for t, state in events if state == "stop"]
+            return (starts[0], stops[0]) if starts and stops else None
+        interval1, interval2 = play_interval(board, first_seen), play_interval(board2, second_seen)
+        serial = (interval1 is not None and interval2 is not None and
+                  (interval1[1] <= interval2[0] or interval2[1] <= interval1[0]))
+        check(first_play == second_play == "done" and serial, "两块假板并发收到的语音播放不重叠",
+              f"ju={interval1} jingyu={interval2}")
+
+        await board.ws.send_json({"session_id": "", "type": "mcp", "payload": {
+            "jsonrpc": "2.0", "method": "notifications/bothouse_touch", "params": {"key": 5},
+        }})
+        await asyncio.sleep(0.1)
+        check(any("[touch] ju 键 5 → conversation" in s for s in logs), "触摸键号到服务端 conversation 通知")
+
+        # 5 断线重连
         await tunnel.stop()
         t0 = time.monotonic()
         while not board.ws.closed and time.monotonic() - t0 < a.timeout:
