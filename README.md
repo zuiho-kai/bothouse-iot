@@ -38,9 +38,14 @@ BOTHOUSE_BRIDGE_TOKEN=... .venv/bin/python -m bothouse_iot --config ../config.to
 - 板子圆屏上的角色表盘：名字、头像，待机 / 思考中 / 正在回答跟着 bot 变。
 - 网页表盘：浏览器打开 `http://<设备服务>:8791/dial`，没有板子也能看各角色在干什么；`/dial?role=<角色>` 只看一个。
 - 会动的角色：待机时呼吸、头发轻摆、随机眨眼；思考时歪头、眼神上移、头边冒气泡；说话时嘴跟着语音的音量开合。
-  一张立绘就能做，每个角色可以有几款皮肤（自带橘的「标准」和「油画棒」），网页 `/dial?skin=<皮肤>` 随时换着看；
+  一张立绘就能做，每个角色可以有几款皮肤（自带橘的「涂鸦」「油画棒」「标准」三款），网页 `/dial?skin=<皮肤>` 随时换着看；
   圆屏用同一套动画离线录好的循环帧按状态播，说话时只刷嘴那一小块。做法见 [docs/dial-skins.md](docs/dial-skins.md)，
   动画引擎来自 [Coopanion](https://github.com/Pal-AI-Lab/Coopanion)。
+
+  橘的三款皮肤（从上到下：涂鸦、油画棒、标准；从左到右：待机、思考中、正在回答）：
+
+  ![橘的三款表盘皮肤](docs/images/ju-skins.png)
+
 - 出门也能用：板子连手机热点，经云服务器转发连回家里（[docs/remote.md](docs/remote.md)），每块板一把钥匙。
 - 固件发布：打 tag 时 GitHub Actions 编好固件放到 Release；设备服务配 `firmware_release` 后自己取最新版，
   板子连上时比对，不一样就在空闲时 Wi-Fi 升级。不想自己编的直接下 Release 里的 `xiaozhi-<板型>.bin`。
