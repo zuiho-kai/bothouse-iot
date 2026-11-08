@@ -133,8 +133,9 @@ class OpusStream:
 class Segmenter:
     """30 毫秒一帧喂 PCM，切出一句就调 on_utterance(wav)。线程安全（解码读线程里调 push）。"""
 
-    def __init__(self, on_utterance: Callable[[bytes], None]):
+    def __init__(self, on_utterance: Callable[[bytes], None], on_voice_start: Callable[[], None] | None = None):
         self.on_utterance = on_utterance
+        self.on_voice_start = on_voice_start or (lambda: None)
         self._mu = threading.Lock()
         self._buf = b""
         self._pre: list[bytes] = []
@@ -144,11 +145,17 @@ class Segmenter:
 
     def push(self, pcm: bytes) -> None:
         out = None
+        started = 0
         with self._mu:
             self._buf += pcm
             while len(self._buf) >= VAD_FRAME_BYTES:
                 f, self._buf = self._buf[:VAD_FRAME_BYTES], self._buf[VAD_FRAME_BYTES:]
+                was_idle = self._utter is None
                 out = self._frame(f) or out
+                if was_idle and self._utter is not None:
+                    started += 1
+        for _ in range(started):
+            self.on_voice_start()
         if out:
             self.on_utterance(out)
 
@@ -181,8 +188,10 @@ class BoardMic:
     IDLE_FLUSH_SEC = 1.0
 
     def __init__(self, on_utterance: Callable[[str, bytes], None], log: Callable[[str], None] = print,
-                 decoder: Callable[[Callable[[bytes], None]], OpusStream] | None = None):
+                 decoder: Callable[[Callable[[bytes], None]], OpusStream] | None = None,
+                 on_voice_start: Callable[[], None] | None = None):
         self.on_utterance, self.log = on_utterance, log
+        self.on_voice_start = on_voice_start or (lambda: None)
         self.decoder = decoder or OpusStream
         self._dec: dict[str, OpusStream] = {}
         self._seg: dict[str, Segmenter] = {}
@@ -197,7 +206,8 @@ class BoardMic:
             return
         dec = self._dec.get(role)
         if dec is None or not dec.alive():
-            seg = self._seg.setdefault(role, Segmenter(lambda wav, r=role: self.on_utterance(r, wav)))
+            seg = self._seg.setdefault(
+                role, Segmenter(lambda wav, r=role: self.on_utterance(r, wav), self.on_voice_start))
             dec = self._dec[role] = self.decoder(seg.push)
             self.log(f"[mic] 开始收 {role} 的板子的麦克风")
         self._last[role] = time.monotonic()

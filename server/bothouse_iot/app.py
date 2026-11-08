@@ -65,7 +65,7 @@ class App:
                 if not b.key:
                     self.log(f"[xiaozhi] {b.role} 的板子没配 key，require_key 开着时它连不上（tools/board-nvs.py --ws-token-gen）")
         self.dial = Dial(self.xz, cfg, self.log)
-        self.mic = BoardMic(self._on_utterance, self.log)
+        self.mic = BoardMic(self._on_utterance, self.log, on_voice_start=self._on_voice_start)
         self.xz.on_mic, self.xz.on_mic_end = self.mic.on_packet, self.mic.on_end
         self.loop: asyncio.AbstractEventLoop | None = None
         self.ws: aiohttp.ClientWebSocketResponse | None = None
@@ -80,6 +80,8 @@ class App:
         self._local_tts = cfg.tts == "command"
         self._last_wav: dict[str, bytes] = {}
         self._audio_wait: dict[str, asyncio.TimerHandle] = {}
+        self._speaker_lock = asyncio.Lock()
+        self._playing: tuple[str, str] | None = None
         self.sent: list[dict] = []        # 发给 bothouse 的消息（测试、排错用）
 
     # ---------- 起停 ----------
@@ -281,6 +283,17 @@ class App:
         if self.loop is not None:
             asyncio.run_coroutine_threadsafe(self._utterance(role, wav), self.loop)
 
+    def _on_voice_start(self) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._interrupt_playback)
+
+    def _interrupt_playback(self) -> None:
+        if self._playing is None:
+            return
+        role, pid = self._playing
+        self.log(f"[speak] 收到真人开口，打断 {role} 的播放")
+        self.xz.stop_all()
+
     async def _utterance(self, role: str, wav: bytes) -> None:
         self.log(f"[mic] {role} 的板子说完一句（{(len(wav) - 44) / 32000:.1f} 秒）")
         if self._local_stt:
@@ -319,21 +332,28 @@ class App:
 
     async def play(self, role: str, text: str, audio: bytes) -> str:
         """推一段音频（任何 ffmpeg 读得懂的格式）给 role 的板子，等它播完。返回回执。"""
-        pid = uuid.uuid4().hex
-        fut = asyncio.get_running_loop().create_future()
-        self._receipts[pid] = fut
-        env = await asyncio.get_running_loop().run_in_executor(None, self.dial.envelope, audio)   # 网页表盘按它开合嘴
-        self.dial.set(role, "speaking", env)
-        self.mic.muted.add(role)
-        try:
-            self.xz.send([{"role": role, "play_id": pid, "event": "start", "text": text},
-                          {"role": role, "play_id": pid, "event": "audio", "data": base64.b64encode(audio).decode(),
-                           "last": True}])
-            r = await asyncio.wait_for(fut, PLAY_TIMEOUT_SEC)
-        except asyncio.TimeoutError:
-            r = "timeout"
-        finally:
-            self._receipts.pop(pid, None)
-            self.mic.muted.discard(role)
-        self.log(f"[speak] {role}：{r}（{text[:40]}）")
-        return r
+        async with self._speaker_lock:
+            pid = uuid.uuid4().hex
+            fut = asyncio.get_running_loop().create_future()
+            self._receipts[pid] = fut
+            self._playing = (role, pid)
+            env = await asyncio.get_running_loop().run_in_executor(None, self.dial.envelope, audio)
+            self.dial.set(role, "speaking", env)
+            self.mic.muted.add(role)
+            try:
+                self.xz.send([{"role": role, "play_id": pid, "event": "start", "text": text},
+                              {"role": role, "play_id": pid, "event": "audio", "data": base64.b64encode(audio).decode(),
+                               "last": True}])
+                r = await asyncio.wait_for(fut, PLAY_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                r = "timeout"
+            finally:
+                self._receipts.pop(pid, None)
+                self.mic.muted.discard(role)
+                if self._playing == (role, pid):
+                    self._playing = None
+                if self._queues.get(role, asyncio.Queue()).empty():
+                    self._busy.discard(role)
+                    self.dial.set(role, "idle")
+            self.log(f"[speak] {role}：{r}（{text[:40]}）")
+            return r
