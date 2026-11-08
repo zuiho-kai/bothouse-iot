@@ -25,6 +25,7 @@ from .config import Config
 from .dial import Dial
 from .mic import BoardMic
 from .release import DEFAULT_ASSET, ReleaseFirmware
+from .wake import MUTE, PAUSE, UNMUTE, Words, sounds_like_suffix
 from .xiaozhi import XiaozhiServer
 
 CAPABILITIES = ["text", "audio", "typing"]
@@ -49,9 +50,11 @@ class App:
         self.cfg = cfg
         self.log = log or (lambda s: print(time.strftime("%H:%M:%S ") + s, flush=True))
         self.boards = cfg.by_role()
+        self.wake = Words([(b.role, b.name) for b in cfg.boards])
         self.xz = XiaozhiServer({b.device: b.role for b in cfg.boards}, token=cfg.token, port=cfg.port, host=cfg.listen,
                                 keys={b.device: b.key for b in cfg.boards if b.key}, require_key=cfg.require_key,
                                 public_url=cfg.public_url, on_receipt=self._on_receipt, log=self.log)
+        self.xz.on_notify = self._on_board_notify
         if cfg.firmware:
             self.xz.firmware = cfg.rel(cfg.firmware)
             self.xz.fw_asked_file = cfg.rel(cfg.data_dir) / "firmware-asked.txt"
@@ -65,7 +68,7 @@ class App:
                 if not b.key:
                     self.log(f"[xiaozhi] {b.role} 的板子没配 key，require_key 开着时它连不上（tools/board-nvs.py --ws-token-gen）")
         self.dial = Dial(self.xz, cfg, self.log)
-        self.mic = BoardMic(self._on_utterance, self.log)
+        self.mic = BoardMic(self._on_utterance, self.log, on_voice_start=self._on_voice_start)
         self.xz.on_mic, self.xz.on_mic_end = self.mic.on_packet, self.mic.on_end
         self.loop: asyncio.AbstractEventLoop | None = None
         self.ws: aiohttp.ClientWebSocketResponse | None = None
@@ -80,6 +83,11 @@ class App:
         self._local_tts = cfg.tts == "command"
         self._last_wav: dict[str, bytes] = {}
         self._audio_wait: dict[str, asyncio.TimerHandle] = {}
+        self._speaker_lock = asyncio.Lock()
+        self._playing: tuple[str, str] | None = None
+        self._playing_text = ""
+        self._last_playback: tuple[str, float] | None = None
+        self._muted = False
         self.sent: list[dict] = []        # 发给 bothouse 的消息（测试、排错用）
 
     # ---------- 起停 ----------
@@ -281,21 +289,78 @@ class App:
         if self.loop is not None:
             asyncio.run_coroutine_threadsafe(self._utterance(role, wav), self.loop)
 
+    def _on_voice_start(self) -> None:
+        if self.loop is not None:
+            self.loop.call_soon_threadsafe(self._interrupt_playback)
+
+    def _interrupt_playback(self) -> None:
+        if self._playing is None:
+            return
+        role, pid = self._playing
+        self.log(f"[speak] 收到真人开口，打断 {role} 的播放")
+        self.xz.stop_all()
+
     async def _utterance(self, role: str, wav: bytes) -> None:
         self.log(f"[mic] {role} 的板子说完一句（{(len(wav) - 44) / 32000:.1f} 秒）")
-        if self._local_stt:
+        heard_text = None
+        if self.cfg.stt_command:
             try:
-                text = await asyncio.get_running_loop().run_in_executor(None, speech.transcribe, self.cfg.stt_command, wav)
+                heard_text = await asyncio.get_running_loop().run_in_executor(
+                    None, speech.transcribe, self.cfg.stt_command, wav)
             except Exception as e:
-                return self.log(f"[mic] 本地转写失败：{e!r}")
-            if not text:
+                self.log(f"[mic] 本地口令转写失败：{e!r}")
+        if heard_text and self._is_playback_echo(heard_text):
+            self.log(f"[mic] 忽略 {role} 收到的播放回声")
+            return
+        if heard_text:
+            command = self.wake.classify(heard_text, self._muted)
+            if command.action == PAUSE:
+                self.xz.stop_all()
+                self.log("[voice] 口令：暂停")
+                return
+            if command.action == MUTE:
+                self._muted = True
+                self.xz.stop_all()
+                self.log("[voice] 口令：闭麦")
+                return
+            if command.action == UNMUTE:
+                self._muted = False
+                self.log("[voice] 口令：开麦")
+                return
+            if self._muted:
+                self.log("[voice] 闭麦中，忽略非控制口令")
+                return
+            if command.targets:
+                target = command.targets[0]
+                role = target
+                self.log(f"[voice] 唤醒角色：{target}")
+        if self._local_stt:
+            if not heard_text:
                 return self.log(f"[mic] {role} 这句没转出字")
-            await self.send_user(role, text=text)
-        else:
+            await self.send_user(role, text=heard_text)
+        elif not self._muted:
             self._last_wav[role] = wav
             await self.send_user(role, wav=wav)
 
+    def _is_playback_echo(self, text: str) -> bool:
+        playback_text = self._playing_text
+        if self._last_playback and time.monotonic() - self._last_playback[1] < 1.5:
+            playback_text = self._last_playback[0]
+        if not playback_text:
+            return False
+        return sounds_like_suffix(text, playback_text)
+
     # ---------- 放音 ----------
+    def _on_board_notify(self, role: str | None, payload: dict) -> None:
+        if role is None or payload.get("method") != "notifications/bothouse_touch":
+            return
+        params = payload.get("params") or {}
+        key = params.get("key") if isinstance(params, dict) else None
+        if not isinstance(key, int) or not 0 <= key < 6:
+            self.log(f"[touch] 忽略 {role} 的无效触摸键事件")
+            return
+        self.log(f"[touch] {role} 键 {key} → conversation")
+
     def _on_receipt(self, pid: str, result: str, started=None) -> None:
         fut = self._receipts.get(pid)
         if fut is not None and not fut.done():
@@ -319,21 +384,31 @@ class App:
 
     async def play(self, role: str, text: str, audio: bytes) -> str:
         """推一段音频（任何 ffmpeg 读得懂的格式）给 role 的板子，等它播完。返回回执。"""
-        pid = uuid.uuid4().hex
-        fut = asyncio.get_running_loop().create_future()
-        self._receipts[pid] = fut
-        env = await asyncio.get_running_loop().run_in_executor(None, self.dial.envelope, audio)   # 网页表盘按它开合嘴
-        self.dial.set(role, "speaking", env)
-        self.mic.muted.add(role)
-        try:
-            self.xz.send([{"role": role, "play_id": pid, "event": "start", "text": text},
-                          {"role": role, "play_id": pid, "event": "audio", "data": base64.b64encode(audio).decode(),
-                           "last": True}])
-            r = await asyncio.wait_for(fut, PLAY_TIMEOUT_SEC)
-        except asyncio.TimeoutError:
-            r = "timeout"
-        finally:
-            self._receipts.pop(pid, None)
-            self.mic.muted.discard(role)
-        self.log(f"[speak] {role}：{r}（{text[:40]}）")
-        return r
+        async with self._speaker_lock:
+            pid = uuid.uuid4().hex
+            fut = asyncio.get_running_loop().create_future()
+            self._receipts[pid] = fut
+            self._playing = (role, pid)
+            self._playing_text = text
+            env = await asyncio.get_running_loop().run_in_executor(None, self.dial.envelope, audio)
+            self.dial.set(role, "speaking", env)
+            self.mic.muted.add(role)
+            try:
+                self.xz.send([{"role": role, "play_id": pid, "event": "start", "text": text},
+                              {"role": role, "play_id": pid, "event": "audio", "data": base64.b64encode(audio).decode(),
+                               "last": True}])
+                r = await asyncio.wait_for(fut, PLAY_TIMEOUT_SEC)
+            except asyncio.TimeoutError:
+                r = "timeout"
+            finally:
+                self._receipts.pop(pid, None)
+                self.mic.muted.discard(role)
+                if self._playing == (role, pid):
+                    self._last_playback = (self._playing_text, time.monotonic())
+                    self._playing = None
+                    self._playing_text = ""
+                if self._queues.get(role, asyncio.Queue()).empty():
+                    self._busy.discard(role)
+                    self.dial.set(role, "idle")
+            self.log(f"[speak] {role}：{r}（{text[:40]}）")
+            return r

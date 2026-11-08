@@ -1,4 +1,5 @@
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
@@ -7,6 +8,7 @@ from bothouse_iot import app as appmod
 from bothouse_iot.app import App, speakable
 from bothouse_iot.config import load
 from bothouse_iot.mic import Segmenter, VAD_FRAME_BYTES
+from bothouse_iot.wake import IGNORE, MUTE, PAUSE, UNMUTE, WAKE, Words
 import struct
 
 
@@ -24,6 +26,17 @@ role = "ju"
 project = "p"
 {extra}
 ''')
+    return p
+
+
+def cfg_with_stt(tmp_path: Path) -> Path:
+    p = cfg(tmp_path)
+    p.write_text(p.read_text().replace(
+        "[[boards]]",
+        '[speech]\nstt = "command"\nstt_command = ["fake-stt"]\n'
+        '[[boards]]\nname = "橘"',
+    ) + '\n[[boards]]\ndevice = "aa:bb:cc:dd:ee:02"\nrole = "jingyu"\n'
+        'name = "鲸鱼娘"\nproject = "q"\n')
     return p
 
 
@@ -61,6 +74,122 @@ def test_segmenter_cuts_one_utterance():
     s.push(bytes(VAD_FRAME_BYTES) * 5 + loud * 30)
     s.flush()
     assert len(out) == 1 and out[0][:4] == b"RIFF"
+
+
+def test_segmenter_reports_only_voice_onset():
+    out, starts = [], []
+    s = Segmenter(out.append, lambda: starts.append("start"))
+    loud = struct.pack("<h", 3000) * (VAD_FRAME_BYTES // 2)
+    s.push(loud * 30)
+    s.push(loud * 10)
+    assert starts == ["start"]
+    s.flush()
+    assert len(out) == 1
+
+
+def test_voice_commands_match_pinyin_and_prioritize_controls():
+    words = Words([("ju", "橘"), ("jingyu", "鲸鱼娘")])
+    assert words.classify("菊在吗").targets == ("ju",)
+    assert words.classify("金玉良在吗").targets == ("jingyu",)
+    assert words.classify("必卖").action == MUTE
+    assert words.classify("必卖", muted=True).action == MUTE
+    assert words.classify("闭麦").action == MUTE
+    assert words.classify("暂停").action == PAUSE
+    assert words.classify("暂停一下").action == PAUSE
+    assert words.classify("我想暂停").action == IGNORE
+    assert words.classify("开麦", muted=True).action == UNMUTE
+    assert words.classify("你好", muted=True).action == IGNORE
+
+
+async def test_playbacks_are_serial_and_voice_start_stops_current(tmp_path, monkeypatch):
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+    a._queues = {"ju": asyncio.Queue(), "jingyu": asyncio.Queue()}
+    a._queues["ju"].put_nowait(("one", b""))
+    a._queues["jingyu"].put_nowait(("two", b""))
+    sent = []
+    stopped = []
+    first_started = asyncio.Event()
+    second_started = asyncio.Event()
+    monkeypatch.setattr(a.dial, "envelope", lambda audio: [])
+    monkeypatch.setattr(a.dial, "set", lambda *args: None)
+    def send(frames):
+        sent.extend(frames)
+        if any(f["event"] == "start" and f["role"] == "ju" for f in frames):
+            first_started.set()
+        if any(f["event"] == "start" and f["role"] == "jingyu" for f in frames):
+            second_started.set()
+        return True
+    monkeypatch.setattr(a.xz, "send", send)
+    monkeypatch.setattr(a.xz, "stop_all", lambda: stopped.append(True))
+    first = asyncio.create_task(a.play("ju", "one", b"audio"))
+    await asyncio.wait_for(first_started.wait(), 1)
+    second = asyncio.create_task(a.play("jingyu", "two", b"audio"))
+    await asyncio.sleep(0)
+    assert [f["role"] for f in sent if f["event"] == "start"] == ["ju"]
+    a._on_receipt(a._playing[1], "done")
+    assert await first == "done"
+    await asyncio.wait_for(second_started.wait(), 1)
+    assert [f["role"] for f in sent if f["event"] == "start"] == ["ju", "jingyu"]
+    a._interrupt_playback()
+    assert stopped == [True]
+    a._on_receipt(a._playing[1], "stopped")
+    assert await second == "stopped"
+
+
+def test_touch_notification_maps_each_key_to_conversation(tmp_path):
+    lines = []
+    a = App(load(cfg(tmp_path)), log=lines.append)
+    a._on_board_notify("ju", {"method": "notifications/bothouse_touch", "params": {"key": 5}})
+    a._on_board_notify("ju", {"method": "notifications/bothouse_touch", "params": {"key": 6}})
+    assert lines == ["[touch] ju 键 5 → conversation", "[touch] 忽略 ju 的无效触摸键事件"]
+
+
+def test_playback_echo_match_catches_recent_speech_tail(tmp_path):
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+    a._playing_text = "橘的本句结尾是闭麦"
+    assert a._is_playback_echo("必卖")
+    a._playing_text = ""
+    a._last_playback = ("橘的本句结尾是闭麦", time.monotonic())
+    assert a._is_playback_echo("必卖")
+    a._last_playback = ("橘的本句结尾是闭麦", time.monotonic() - 2)
+    assert not a._is_playback_echo("必卖")
+
+
+async def test_local_stt_voice_commands_and_wake_routing(tmp_path, monkeypatch):
+    heard = iter(["鲸鱼娘，天气怎么样", "必卖", "暂停", "开麦"])
+    sent = []
+    stopped = []
+    a = App(load(cfg_with_stt(tmp_path)), log=lambda s: None)
+    monkeypatch.setattr(appmod.speech, "transcribe", lambda *_: next(heard))
+    monkeypatch.setattr(a.xz, "stop_all", lambda: stopped.append(True))
+
+    async def send_user(role, text=None, wav=None):
+        sent.append((role, text, wav))
+
+    monkeypatch.setattr(a, "send_user", send_user)
+    wav = b"RIFF"
+    await a._utterance("ju", wav)
+    await a._utterance("ju", wav)
+    assert a._muted and stopped == [True]
+    await a._utterance("ju", wav)
+    assert a._muted and stopped == [True, True]
+    await a._utterance("ju", wav)
+    assert not a._muted
+    assert sent == [("jingyu", "鲸鱼娘，天气怎么样", None)]
+
+
+async def test_without_stt_command_forwards_raw_audio(tmp_path, monkeypatch):
+    sent = []
+    a = App(load(cfg(tmp_path)), log=lambda s: None)
+
+    async def send_user(role, text=None, wav=None):
+        sent.append((role, text, wav))
+
+    monkeypatch.setattr(a, "send_user", send_user)
+    monkeypatch.setattr(appmod.speech, "transcribe", lambda *_: pytest.fail("unexpected STT"))
+    wav = b"RIFF voice"
+    await a._utterance("ju", wav)
+    assert sent == [("ju", None, wav)]
 
 
 async def test_tts_falls_back_to_local_when_bothouse_sends_no_audio(tmp_path, monkeypatch):
