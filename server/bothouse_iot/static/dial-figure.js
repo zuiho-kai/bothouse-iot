@@ -88,6 +88,8 @@ export async function mountFigure(screen, base, opts = {}) {
   bubbles.className = "bubbles";
   bubbles.innerHTML = "<i></i><i></i><i></i>";
   const bubs = [...bubbles.children];
+  if (R.bubbleFill) bubbles.style.setProperty("--bub-fill", R.bubbleFill);   // 皮肤自己配气泡颜色（底色浅的皮肤白气泡看不清）
+  if (R.bubbleEdge) bubbles.style.setProperty("--bub-edge", R.bubbleEdge);
 
   const nextBlink = (t) => t + 2 + Math.random() * 3;   // 来源：SPEC 随机眨眼 2–5 秒
   blinkAt = nextBlink(0);

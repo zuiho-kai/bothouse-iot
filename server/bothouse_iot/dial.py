@@ -14,7 +14,7 @@
      "avatar": "dial/img/ju.jpg", "avatar_think": "dial/img/ju-thinking.jpg"}     （图片地址相对页面，过反向代理前缀也能用）
     GET /dial/img/<角色>[-thinking].jpg  头像原图（浏览器自己缩放）
     GET /dial/skin/<角色>/<皮肤>/<文件>  会动的表盘的皮肤（配置 skins 目录下，docs/dial-skins.md）；
-        消息里多 "skin": "dial/skin/ju/pastel/"（默认皮肤）、"skins": ["pastel", "standard"]；页面 ?skin= 可换
+        消息里多 "skin": "dial/skin/ju/pastel/"（默认皮肤）、"skins": ["pastel", "doodle", "standard"]；页面 ?skin= 可换
     正在回答时消息带这句话的音量包络 "env": [0..1, ...]（每格 ENV_MS 毫秒），网页按它开合嘴
 """
 from __future__ import annotations

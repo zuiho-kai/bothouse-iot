@@ -18,7 +18,7 @@ bothouse 本体不用改：设备服务走 bothouse 现成的外部适配器接�
 | `server/` | 设备服务 + bothouse 适配器（Python，aiohttp） |
 | `firmware/` | 对上游 xiaozhi-esp32 v2.5.2 的补丁、表盘组件 cn_dial、编译脚本、刷写说明 |
 | `tools/` | `board-nvs.py`（USB 改板子的服务器地址 / Wi-Fi / 钥匙）、`fake_board.py`（假板子）、`e2e.py`（对着隔离 bothouse 的端到端自检）、`cloud_sim.py`（云端模拟自检：本机模拟云端转发和隧道，不用真板子和服务器，CI 每次跑）、`dial_demo.py` / `dial_frames.py` / `skin/`（会动的表盘：预览、录圆屏帧、做皮肤） |
-| `skins/` | 表盘角色皮肤：橘的「标准」和「油画棒」两款 |
+| `skins/` | 表盘角色皮肤：橘的「标准」「油画棒」「涂鸦」三款 |
 | `docs/` | 接线说明、出门用（云端转发）、做表盘皮肤 |
 | `deploy/remote/` | 云端转发的 nginx 段、反向隧道（launchd / systemd）示例 |
 

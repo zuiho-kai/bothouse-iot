@@ -63,7 +63,8 @@
   .card.animated .face { display:none; }
   .bubbles { position:absolute; z-index:2; pointer-events:none; font-size:calc(var(--size) * .045); opacity:0; }
   .bubbles i { position:absolute; left:0; top:0; width:1.6em; height:1.6em; margin:-.8em; border-radius:50%;
-               background:rgba(255,255,255,.92); box-shadow:0 0 .5em rgba(0,0,0,.25); }
+               background:var(--bub-fill, rgba(255,255,255,.92)); box-shadow:0 0 .5em rgba(0,0,0,.25);
+               border:var(--bub-edge, none); box-sizing:border-box; }
   body.single { background:#000; height:100vh; overflow:hidden; display:flex; align-items:center; justify-content:center; --size:100vmin; }
   body.single header, body.single .sub { display:none; }
   body.single #dials { padding:0; }
