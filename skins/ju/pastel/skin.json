@@ -123,7 +123,9 @@
   "bubble": [
    300,
    290
-  ]
+  ],
+  "bubbleFill": "#fffaf2",
+  "bubbleEdge": ".16em solid #2a1d17"
  },
  "name": "油画棒"
 }

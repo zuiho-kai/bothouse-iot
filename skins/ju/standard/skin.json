@@ -123,7 +123,9 @@
   "bubble": [
    300,
    290
-  ]
+  ],
+  "bubbleFill": "#ffd166",
+  "bubbleEdge": ".16em solid #4a2a21"
  },
  "name": "标准"
 }
